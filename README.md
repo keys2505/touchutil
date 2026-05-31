@@ -48,6 +48,21 @@ brew install --cask keys2505/tap/touchutil
 
 No Xcode, no manual steps. Homebrew installs the app, sets up the login agent, and starts it automatically.
 
+**After install — grant permissions (required, one-time)**
+
+macOS will block touchutil until you grant two permissions under **System Settings → Privacy & Security**:
+
+| Permission | Why it's needed |
+| --- | --- |
+| **Input Monitoring** | To read raw touch coordinates from the touchscreen |
+| **Accessibility** | To move the cursor and synthesize click events |
+
+1. Open System Settings → Privacy & Security → **Input Monitoring** → enable `touchutil`
+2. Open System Settings → Privacy & Security → **Accessibility** → enable `touchutil`
+3. The app retries automatically every few seconds once permissions are granted — no need to relaunch manually.
+
+> These permissions stay local on your Mac. touchutil reads touch input only to move your cursor — it sends nothing anywhere.
+
 To uninstall:
 
 ```bash
@@ -87,11 +102,7 @@ chmod +x scripts/*.sh
 
 The installer builds the app, copies it to `/Applications`, links the CLI to
 `/usr/local/bin/touchutil`, and sets up a login agent so it starts
-automatically.
-
-On first launch, grant **Input Monitoring** and **Accessibility** to
-`touchutil` (the installer prints the exact commands). macOS only applies a new
-permission on a fresh start, so re-run after granting.
+automatically. After install, grant the two permissions described above.
 
 ## Usage
 
