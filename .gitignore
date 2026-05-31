@@ -1,0 +1,12 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+*.o
+*.dSYM/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
