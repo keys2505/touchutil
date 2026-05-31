@@ -244,6 +244,12 @@ final class TouchDriver {
     private var xLogicalMax = 4095.0
     private var yLogicalMax = 4095.0
 
+    // Single-finger "mouse collection" fallback (Button 0x09/0x01 + GD X/Y).
+    // Used when the panel does not emit digitizer multi-touch frames.
+    private var multitouchActive = false
+    private var pNX = 0.0, pNY = 0.0
+    private var pTip = false, pDown = false
+
     // Gesture sequence state.
     private var seqActive = false
     private var seqMaxFingers = 0
@@ -367,23 +373,59 @@ final class TouchDriver {
     private func handle(value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
         let cookie = IOHIDElementGetCookie(element)
+        let page = IOHIDElementGetUsagePage(element)
+        let usage = IOHIDElementGetUsage(element)
         let v = IOHIDValueGetIntegerValue(value)
 
         if config.debug {
-            err(String(format: "page=0x%02X usage=0x%02X val=%d",
-                       IOHIDElementGetUsagePage(element), IOHIDElementGetUsage(element), v))
+            err(String(format: "page=0x%02X usage=0x%02X val=%d", page, usage, v))
         }
 
+        // Digitizer multi-touch contact element?
         if let (idx, role) = roleByCookie[cookie] {
             switch role {
             case .x: contacts[idx].nx = Double(v) / xLogicalMax
             case .y: contacts[idx].ny = Double(v) / yLogicalMax
-            case .tip: contacts[idx].tip = (v != 0)
+            case .tip:
+                contacts[idx].tip = (v != 0)
+                if v != 0 && !multitouchActive {
+                    multitouchActive = true
+                    err("Digitizer multi-touch frames detected — gestures enabled.")
+                }
             }
-            // If the device has no contact-count element, evaluate on tip changes.
-            if contactCountCookie == nil && role == .tip { processFrame() }
-        } else if cookie == contactCountCookie {
-            processFrame()
+            if multitouchActive && contactCountCookie == nil && role == .tip { processFrame() }
+            return
+        }
+
+        // Contact-count frame boundary (only meaningful once real digitizer
+        // tips have been seen — otherwise the panel is in single-touch mode).
+        if cookie == contactCountCookie {
+            if multitouchActive { processFrame() }
+            return
+        }
+
+        // Single-finger "mouse collection" fallback. This is what most panels
+        // (incl. this SiS one) emit during normal touch on macOS.
+        if multitouchActive { return }
+        switch (page, usage) {
+        case (0x01, 0x30): pNX = Double(v) / xLogicalMax; handlePrimary()
+        case (0x01, 0x31): pNY = Double(v) / yLogicalMax; handlePrimary()
+        case (0x09, 0x01): pTip = (v != 0); handlePrimary()
+        default: break
+        }
+    }
+
+    /// Reliable single-finger pointer: move, press on touch, drag, release.
+    private func handlePrimary() {
+        let p = screenPoint(CGPoint(x: pNX, y: pNY))
+        if pTip && !pDown {
+            pDown = true
+            postMouse(.leftMouseDown, p)
+        } else if pTip && pDown {
+            postMouse(.leftMouseDragged, p)
+        } else if !pTip && pDown {
+            pDown = false
+            postMouse(.leftMouseUp, p)
         }
     }
 
