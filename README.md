@@ -125,9 +125,11 @@ touchdriver --display-index 1  # one-off override (also remembered)
 | Option | Description |
 | --- | --- |
 | *(none)* | Auto-detect the touchscreen display, or use your saved `--setup` choice |
+| `--no-gestures` | Single-finger pointer only (disable multi-finger gestures) |
 | `--setup` | Interactively pick & remember the touchscreen display |
-| `--list-displays` | List displays with index, vendor and model, then exit |
+| `--list-displays` | List displays (marks the configured touchscreen) plus detected touch devices and their max finger count, then exit |
 | `--list-devices` | List HID devices (find your touchscreen), then exit |
+| `--inspect` | Dump a touchscreen's HID capabilities (multi-touch, contacts), then exit |
 | `--display-index N` | Map touch to the display at index `N` (also remembered) |
 | `--display-vendor V` | Match the target display by vendor number (also remembered) |
 | `--display-model M` | Match the target display by model number |

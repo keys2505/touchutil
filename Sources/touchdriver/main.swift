@@ -74,17 +74,86 @@ func activeDisplays() -> [CGDirectDisplayID] {
 
 // MARK: - List / inspect / setup modes
 
+/// Count the touch capabilities of a digitizer device:
+/// (fingerGroups = simultaneous contacts reported, contactCountMax = declared max).
+func touchCapabilities(_ dev: IOHIDDevice) -> (fingerGroups: Int, contactCountMax: Int) {
+    guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else {
+        return (0, 0)
+    }
+    struct G { var x = false; var y = false; var tip = false }
+    var groups: [UInt32: G] = [:]
+    var contactCountMax = 0
+    for e in elements {
+        let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
+        if p == 0x0D && u == 0x54 { contactCountMax = max(contactCountMax, IOHIDElementGetLogicalMax(e)) }
+        let isX = (p == 0x01 && u == 0x30)
+        let isY = (p == 0x01 && u == 0x31)
+        let isTip = (p == 0x0D && u == 0x42)
+        guard isX || isY || isTip, let parent = IOHIDElementGetParent(e) else { continue }
+        let pc = IOHIDElementGetCookie(parent)
+        if groups[pc] == nil { groups[pc] = G() }
+        if isX { groups[pc]!.x = true }
+        if isY { groups[pc]!.y = true }
+        if isTip { groups[pc]!.tip = true }
+    }
+    let fingerGroups = groups.values.filter { $0.x && $0.y && $0.tip }.count
+    return (fingerGroups, contactCountMax)
+}
+
+/// All connected touchscreen digitizers (usagePage 0x0D, usage 0x04).
+func touchDevices() -> [IOHIDDevice] {
+    let mgr = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    IOHIDManagerSetDeviceMatching(mgr, [
+        kIOHIDDeviceUsagePageKey as String: 0x0D,
+        kIOHIDDeviceUsageKey as String: 0x04,
+    ] as CFDictionary)
+    IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
+    return (IOHIDManagerCopyDevices(mgr) as? Set<IOHIDDevice>).map(Array.init) ?? []
+}
+
 func listDisplays() {
     let mainID = CGMainDisplayID()
+    let saved = loadSavedConfig()
+    let devices = touchDevices()
+    let hasTouchHardware = !devices.isEmpty
+
     print("Active displays:")
     for (i, d) in activeDisplays().enumerated() {
         let b = CGDisplayBounds(d)
         let main = (d == mainID) ? "  [MAIN]" : ""
-        print(String(format: "  [%d] id=%u  origin=(%d,%d)  size=%dx%d  vendor=%u  model=%u%@",
+        // Touch column: mark the display configured as the touchscreen.
+        var touch = "  touch: —"
+        if let s = saved, CGDisplayVendorNumber(d) == s.displayVendor,
+           CGDisplayModelNumber(d) == s.displayModel {
+            touch = "  touch: ✓ configured"
+        } else if hasTouchHardware {
+            touch = "  touch: ? (run --setup to assign)"
+        }
+        print(String(format: "  [%d] id=%u  origin=(%d,%d)  size=%dx%d  vendor=%u  model=%u%@%@",
                      i, d, Int(b.origin.x), Int(b.origin.y),
                      Int(b.size.width), Int(b.size.height),
-                     CGDisplayVendorNumber(d), CGDisplayModelNumber(d), main))
+                     CGDisplayVendorNumber(d), CGDisplayModelNumber(d), main, touch))
     }
+
+    print("\nDetected touchscreen devices:")
+    if devices.isEmpty {
+        print("  (none — no USB touchscreen detected, or Input Monitoring not granted)")
+    } else {
+        for dev in devices {
+            let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "?"
+            let vid = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? -1
+            let pid = IOHIDDeviceGetProperty(dev, kIOHIDProductIDKey as CFString) as? Int ?? -1
+            let cap = touchCapabilities(dev)
+            let fingers = cap.contactCountMax > 0
+                ? "\(cap.fingerGroups) simultaneous (declared max \(cap.contactCountMax))"
+                : "\(cap.fingerGroups) simultaneous"
+            let multi = cap.fingerGroups >= 2 ? "multi-touch" : "single-touch"
+            print(String(format: "  %@  vendor=0x%04X product=0x%04X  →  %@, %@ fingers",
+                         name, vid, pid, multi, fingers))
+        }
+    }
+    print("\nNote: macOS can't map a touch device to a specific display automatically;")
+    print("use --setup to tell touchdriver which display is the touchscreen.")
 }
 
 func listDevices() {
