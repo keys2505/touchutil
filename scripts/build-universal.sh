@@ -32,7 +32,7 @@ rm -f "$OUT_DIR/touchdriver-arm64" "$OUT_DIR/touchdriver-x86_64"
 # the binary's code hash, so you may need to re-grant Input Monitoring /
 # Accessibility after a rebuild.
 BUNDLE_ID="${BUNDLE_ID:-com.eriproject.touchdriver}"
-echo "Code-signing CLI binary (ad-hoc, identifier=$BUNDLE_ID)..."
+echo "Code-signing (ad-hoc, identifier=$BUNDLE_ID)..."
 codesign --force --sign - --identifier "$BUNDLE_ID" "$OUT_DIR/touchdriver"
 
 # Assemble a background .app bundle. Bundling gives macOS a stable, registered
