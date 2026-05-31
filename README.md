@@ -28,27 +28,38 @@ and warps + clicks the cursor on the display you choose.
 - Xcode Command Line Tools (`xcode-select --install`) — provides the Swift
   compiler. Full Xcode is **not** required.
 
-## Build
+## Install
 
-Clone the repo, then build a universal binary:
+Clone the repo and run the installer. It builds the universal binary, installs
+it to `/usr/local/bin`, sets up a login agent, and prints the one-time
+permission steps:
 
 ```bash
 git clone <your-repo-url> mac-touch-driver
 cd mac-touch-driver
 chmod +x scripts/*.sh
-./scripts/build-universal.sh
+./scripts/install.sh
 ```
 
-This produces `build/touchdriver` (a universal binary). It uses `swiftc` +
-`lipo`, so only the Command Line Tools are needed — full Xcode is not.
+Then grant **Input Monitoring** and **Accessibility** to `touchdriver` once (the
+installer prints the exact commands). That's it — it auto-detects the
+touchscreen and starts at every login.
 
-Install the binary system-wide:
+To remove it:
 
 ```bash
-sudo cp build/touchdriver /usr/local/bin/touchdriver
+./scripts/uninstall.sh          # remove agent + binary
+./scripts/uninstall.sh --purge  # also delete saved config (~/.config/touchdriver)
 ```
 
-Or, for a quick local (current-arch only) build:
+### Manual build (optional)
+
+```bash
+./scripts/build-universal.sh    # -> build/touchdriver (universal, ad-hoc signed)
+```
+
+This uses `swiftc` + `lipo`, so only the Command Line Tools are needed — full
+Xcode is not. For a quick current-arch build via SwiftPM:
 
 ```bash
 swift build -c release
@@ -125,22 +136,17 @@ touchdriver --display-index 1  # one-off override (also remembered)
 
 ## Run automatically at login
 
-Install a per-user LaunchAgent (pass the same options you use when running
-manually):
+`./scripts/install.sh` already sets up a per-user LaunchAgent
+(`~/Library/LaunchAgents/com.touchdriver.agent.plist`) with `RunAtLoad` and
+`KeepAlive`, so the driver starts at login and restarts itself if it stops.
+
+If auto-detection picks the wrong screen, lock the right one once:
 
 ```bash
-./scripts/install-launch-agent.sh --display-index 1
+touchdriver --setup
 ```
 
-The binary appears in the Input Monitoring / Accessibility lists the first time
-the agent runs — enable it in both, then it persists across reboots.
-
-To remove the agent:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.touchdriver.agent.plist
-rm ~/Library/LaunchAgents/com.touchdriver.agent.plist
-```
+To stop/remove it, use `./scripts/uninstall.sh` (see **Install** above).
 
 ## Troubleshooting
 
