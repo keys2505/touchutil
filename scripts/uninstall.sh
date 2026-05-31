@@ -1,21 +1,21 @@
 #!/bin/bash
 #
-# uninstall.sh — stop and remove touchdriver from macOS.
+# uninstall.sh — stop and remove touchutil from macOS.
 #
 # Removes the LaunchAgent, the app bundle, and the CLI symlink, and revokes the
 # Input Monitoring / Accessibility permissions via tccutil. Pass --purge to also
-# delete the saved configuration (~/.config/touchdriver).
+# delete the saved configuration (~/.config/touchutil).
 #
 set -euo pipefail
 
 PREFIX="${PREFIX:-/usr/local}"
-BUNDLE_ID="${BUNDLE_ID:-com.eriproject.touchdriver}"
-APP_DST="/Applications/touchdriver.app"
-CLI_LINK="$PREFIX/bin/touchdriver"
-LABEL="com.touchdriver.agent"
+BUNDLE_ID="${BUNDLE_ID:-com.eriproject.touchutil}"
+APP_DST="/Applications/touchutil.app"
+CLI_LINK="$PREFIX/bin/touchutil"
+LABEL="com.touchutil.agent"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
-CONFIG_DIR="$HOME/.config/touchdriver"
+CONFIG_DIR="$HOME/.config/touchutil"
 
 PURGE=0
 for a in "$@"; do
@@ -31,10 +31,10 @@ launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || launchctl unload "$PLIST" 2>/d
 rm -f "$PLIST"
 
 # 2. Kill any lingering process (by exact name, catches hand-started copies too).
-echo "==> Stopping any running touchdriver process..."
-pkill -x touchdriver 2>/dev/null || true
+echo "==> Stopping any running touchutil process..."
+pkill -x touchutil 2>/dev/null || true
 sleep 1
-pkill -9 -x touchdriver 2>/dev/null || true
+pkill -9 -x touchutil 2>/dev/null || true
 
 # 3. Revoke privacy permissions by bundle id.
 echo "==> Revoking privacy permissions ($BUNDLE_ID)..."
@@ -55,11 +55,11 @@ if [ "$PURGE" -eq 1 ]; then
 fi
 
 # 6. Clean up logs.
-rm -f /tmp/touchdriver.out.log /tmp/touchdriver.err.log
+rm -f /tmp/touchutil.out.log /tmp/touchutil.err.log
 
 cat <<EOF
 
 ✅ Uninstalled. The app, login agent, CLI link, and privacy permissions have
-   been removed. If a stale "touchdriver" row still shows in System Settings >
+   been removed. If a stale "touchutil" row still shows in System Settings >
    Privacy & Security, it is harmless and clears after a logout/restart.
 EOF

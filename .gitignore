@@ -11,7 +11,3 @@ DerivedData/
 
 # Logs
 *.log
-
-# Xcode (DriverKit project is generated from driverkit/project.yml via XcodeGen)
-*.xcodeproj
-xcuserdata/

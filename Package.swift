@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "touchdriver",
+    name: "touchutil",
     platforms: [
         .macOS(.v11)
     ],
     targets: [
         .executableTarget(
-            name: "touchdriver",
-            path: "Sources/touchdriver"
+            name: "touchutil",
+            path: "Sources/touchutil"
         )
     ]
 )

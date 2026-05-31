@@ -1,15 +1,17 @@
 //
-//  touchdriver — Map an external USB touchscreen to its display on macOS,
-//  with trackpad-style multi-touch gestures.
+//  touchutil — Map an external USB touchscreen to its display on macOS.
 //
 //  macOS does not natively route absolute touch input from external USB
-//  touchscreens to the correct display, and it cannot inject real multi-touch
-//  gestures. This tool reads the digitizer's raw multi-touch contacts via
-//  IOHIDManager and:
+//  touchscreens to the correct display. This tool reads the digitizer's
+//  single-finger reports via IOHIDManager and:
 //    • 1 finger      → move cursor, tap-to-click, drag
-//    • 2-finger drag → scroll
-//    • 2-finger tap  → right-click
-//    • 3/4-finger swipe → Spaces / Mission Control / App Exposé (via shortcuts)
+//    • double-tap    → double-click
+//    • long-press    → right-click
+//    • edge swipe    → Spaces / Mission Control / App Exposé (via shortcuts)
+//
+//  This is single-pointer touch only. Multi-touch would require a DriverKit HID
+//  driver (paid Apple Developer account to sign/notarize). IOHIDManager is the
+//  free, userspace alternative — the trade-off is single-finger only.
 //
 //  Works on Apple Silicon and Intel. No kernel extension, no SIP changes.
 //
@@ -33,8 +35,7 @@ struct Config {
     var displayIndex: Int?
     var displayVendor: UInt32?
     var displayModel: UInt32?
-    var gestures = true     // multi-finger gestures on by default
-    var tryMultitouch = false  // attempt the Device Mode feature switch (accepted by SiS panel but macOS still delivers only the mouse collection — see README)
+    var gestures = true     // single-finger tap/long-press/edge gestures on by default
     var debug = false
 }
 
@@ -45,7 +46,7 @@ struct SavedConfig: Codable {
 
 func configURL() -> URL {
     FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".config/touchdriver/config.json")
+        .appendingPathComponent(".config/touchutil/config.json")
 }
 
 func loadSavedConfig() -> SavedConfig? {
@@ -75,32 +76,6 @@ func activeDisplays() -> [CGDirectDisplayID] {
 }
 
 // MARK: - List / inspect / setup modes
-
-/// Count the touch capabilities of a digitizer device:
-/// (fingerGroups = simultaneous contacts reported, contactCountMax = declared max).
-func touchCapabilities(_ dev: IOHIDDevice) -> (fingerGroups: Int, contactCountMax: Int) {
-    guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else {
-        return (0, 0)
-    }
-    struct G { var x = false; var y = false; var tip = false }
-    var groups: [UInt32: G] = [:]
-    var contactCountMax = 0
-    for e in elements {
-        let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
-        if p == 0x0D && u == 0x54 { contactCountMax = max(contactCountMax, IOHIDElementGetLogicalMax(e)) }
-        let isX = (p == 0x01 && u == 0x30)
-        let isY = (p == 0x01 && u == 0x31)
-        let isTip = (p == 0x0D && u == 0x42)
-        guard isX || isY || isTip, let parent = IOHIDElementGetParent(e) else { continue }
-        let pc = IOHIDElementGetCookie(parent)
-        if groups[pc] == nil { groups[pc] = G() }
-        if isX { groups[pc]!.x = true }
-        if isY { groups[pc]!.y = true }
-        if isTip { groups[pc]!.tip = true }
-    }
-    let fingerGroups = groups.values.filter { $0.x && $0.y && $0.tip }.count
-    return (fingerGroups, contactCountMax)
-}
 
 /// All connected touchscreen digitizers (usagePage 0x0D, usage 0x04).
 func touchDevices() -> [IOHIDDevice] {
@@ -145,21 +120,11 @@ func listDisplays() {
             let name = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "?"
             let vid = IOHIDDeviceGetProperty(dev, kIOHIDVendorIDKey as CFString) as? Int ?? -1
             let pid = IOHIDDeviceGetProperty(dev, kIOHIDProductIDKey as CFString) as? Int ?? -1
-            let cap = touchCapabilities(dev)
-            let fingers = cap.contactCountMax > 0
-                ? "\(cap.fingerGroups) simultaneous (declared max \(cap.contactCountMax))"
-                : "\(cap.fingerGroups) simultaneous"
-            let multi = cap.fingerGroups >= 2 ? "multi-touch capable (hardware)" : "single-touch"
-            print(String(format: "  %@  vendor=0x%04X product=0x%04X  →  %@, %@ fingers",
-                         name, vid, pid, multi, fingers))
-        }
-        if !devices.isEmpty {
-            print("\n  'multi-touch capable (hardware)' = the chip advertises it; macOS may still")
-            print("  receive only single-finger reports unless the panel accepts a mode switch.")
+            print(String(format: "  %@  vendor=0x%04X product=0x%04X", name, vid, pid))
         }
     }
     print("\nNote: macOS can't map a touch device to a specific display automatically;")
-    print("use --setup to tell touchdriver which display is the touchscreen.")
+    print("use --setup to tell touchutil which display is the touchscreen.")
 }
 
 func listDevices() {
@@ -196,22 +161,16 @@ func inspectDevices() {
         print("Device: \(name)")
         guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { continue }
         var seen = Set<String>()
-        var contactCountSeen = false
-        var xCount = 0
         for e in elements {
             let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
-            if p == 0x0D && u == 0x54 { contactCountSeen = true }
-            if (p == 0x01 || p == 0x0D) && u == 0x30 { xCount += 1 }
             let key = String(format: "0x%02X/0x%02X", p, u)
             if seen.insert(key).inserted {
                 print(String(format: "  page=0x%02X usage=0x%02X  logical=[%d..%d]",
                              p, u, IOHIDElementGetLogicalMin(e), IOHIDElementGetLogicalMax(e)))
             }
         }
-        print("  --> Contact Count present: \(contactCountSeen)")
-        print("  --> Number of X elements (≈ max simultaneous contacts): \(xCount)\n")
+        print("")
     }
-    print("Multi-touch needs 'Contact Count' present and multiple X elements.")
 }
 
 func runSetup() {
@@ -229,31 +188,15 @@ func runSetup() {
 
 // MARK: - Driver
 
-private enum Role { case x, y, tip }
-
-private struct Contact {
-    var nx = 0.0      // normalized 0..1
-    var ny = 0.0
-    var tip = false
-}
-
 final class TouchDriver {
     private let config: Config
     private var bounds: CGRect = .zero
     private let source = CGEventSource(stateID: .hidSystemState)
     private var manager: IOHIDManager!
 
-    // Multi-touch element mapping.
-    private var roleByCookie: [UInt32: (idx: Int, role: Role)] = [:]
-    private var contactCountCookie: UInt32?
-    private var contacts: [Contact] = []
+    // Single-finger pointer state (Button 0x09/0x01 + GD X/Y "mouse collection").
     private var xLogicalMax = 4095.0
     private var yLogicalMax = 4095.0
-
-    // Single-finger "mouse collection" fallback (Button 0x09/0x01 + GD X/Y).
-    // Used when the panel does not emit digitizer multi-touch frames.
-    private var multitouchActive = false
-    private var multitouchAttempted = false
     private var pNX = 0.0, pNY = 0.0
     private var pTip = false, pDown = false
 
@@ -273,22 +216,6 @@ final class TouchDriver {
     private let edgeSwipeThreshold = 100.0
     private let doubleTapInterval = 0.30
     private let doubleTapDist = 25.0
-
-    // Gesture sequence state.
-    private var seqActive = false
-    private var seqMaxFingers = 0
-    private var seqStart = CGPoint.zero       // normalized centroid at start
-    private var seqStartTime = 0.0
-    private var lastCentroid = CGPoint.zero   // normalized
-    private var pointerDown = false
-    private var swipeFired = false
-
-    // Tunables.
-    private let tapMaxTime = 0.30             // seconds for a tap
-    private let dragThreshold = 8.0          // px before 1-finger press-drag
-    private let tapMoveTol = 12.0            // px max movement for a tap
-    private let swipeThreshold = 90.0        // px for a 3/4-finger swipe
-    private let scrollGain = 1.2
 
     init(config: Config) { self.config = config }
 
@@ -338,11 +265,6 @@ final class TouchDriver {
             .post(tap: .cghidEventTap)
     }
 
-    private func postScroll(dx: Double, dy: Double) {
-        CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2,
-                wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0)?.post(tap: .cghidEventTap)
-    }
-
     private func postKey(_ key: CGKeyCode, control: Bool) {
         let d = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
         let u = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
@@ -353,77 +275,22 @@ final class TouchDriver {
 
     // MARK: HID element setup
 
-    /// Attempt to switch the panel into multi-touch mode the way Windows does:
-    /// write the digitizer "Device Mode" feature (usage 0x0D/0x52). Many panels
-    /// only emit multi-touch reports after this; if the firmware ignores it,
-    /// nothing changes and we stay in single-finger mode.
-    private func tryEnableMultitouch(_ dev: IOHIDDevice) {
-        guard config.tryMultitouch, !multitouchAttempted else { return }
-        multitouchAttempted = true
-        guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { return }
-        var found = false
-        for e in elements where IOHIDElementGetType(e) == kIOHIDElementTypeFeature {
-            let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
-            // Device Mode (0x52) or Input Mode-style selectors; request multi-input.
-            if p == 0x0D && (u == 0x52 || u == 0x53) {
-                for candidate in [3, 2] {   // 3 = multi-input (Windows), 2 = fallback
-                    let val = IOHIDValueCreateWithIntegerValue(kCFAllocatorDefault, e, 0, candidate)
-                    let r = IOHIDDeviceSetValue(dev, e, val)
-                    err(String(format: "Requested multi-touch (feature 0x%02X=%d): %@",
-                               u, candidate, r == kIOReturnSuccess ? "ok" : "failed 0x\(String(r, radix: 16))"))
-                    if r == kIOReturnSuccess { found = true; break }
-                }
-            }
-        }
-        if !found { err("Could not enable multi-touch via feature report (panel may not support it on macOS).") }
-    }
-
+    /// Find the logical max for the General Desktop X / Y axes so we can
+    /// normalize the panel's absolute coordinates to 0..1.
     private func setupElements(_ dev: IOHIDDevice) {
-        roleByCookie.removeAll()
-        contactCountCookie = nil
         guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { return }
-        // Group X/Y/Tip by parent collection; keep only groups that have all three
-        // (this excludes the single-finger mouse collection which has no digitizer tip).
-        struct Group { var x: UInt32?; var y: UInt32?; var tip: UInt32? }
-        var groups: [UInt32: Group] = [:]
-        var order: [UInt32] = []
         for e in elements {
             let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
-            let role: Role?
-            if p == 0x01 && u == 0x30 { role = .x }
-            else if p == 0x01 && u == 0x31 { role = .y }
-            else if p == 0x0D && u == 0x42 { role = .tip }
-            else {
-                if p == 0x0D && u == 0x54 { contactCountCookie = IOHIDElementGetCookie(e) }
-                continue
-            }
-            guard let parent = IOHIDElementGetParent(e) else { continue }
-            let pc = IOHIDElementGetCookie(parent)
-            if groups[pc] == nil { groups[pc] = Group(); order.append(pc) }
-            let c = IOHIDElementGetCookie(e)
-            switch role! {
-            case .x: groups[pc]!.x = c; xLogicalMax = max(1, Double(IOHIDElementGetLogicalMax(e)))
-            case .y: groups[pc]!.y = c; yLogicalMax = max(1, Double(IOHIDElementGetLogicalMax(e)))
-            case .tip: groups[pc]!.tip = c
-            }
+            if p == 0x01 && u == 0x30 { xLogicalMax = max(xLogicalMax, Double(IOHIDElementGetLogicalMax(e))) }
+            else if p == 0x01 && u == 0x31 { yLogicalMax = max(yLogicalMax, Double(IOHIDElementGetLogicalMax(e))) }
         }
-        var idx = 0
-        for pc in order {
-            guard let g = groups[pc], let xc = g.x, let yc = g.y, let tc = g.tip else { continue }
-            roleByCookie[xc] = (idx, .x)
-            roleByCookie[yc] = (idx, .y)
-            roleByCookie[tc] = (idx, .tip)
-            idx += 1
-        }
-        contacts = Array(repeating: Contact(), count: max(1, idx))
-        err("Multi-touch contacts tracked: \(idx) (gestures \(config.gestures ? "ON" : "OFF")).")
+        err("Touch input mapped (gestures \(config.gestures ? "ON" : "OFF")).")
     }
 
     // MARK: Per-value input
 
     private func handle(value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
-        let cookie = IOHIDElementGetCookie(element)
         let page = IOHIDElementGetUsagePage(element)
         let usage = IOHIDElementGetUsage(element)
         let v = IOHIDValueGetIntegerValue(value)
@@ -432,32 +299,6 @@ final class TouchDriver {
             err(String(format: "page=0x%02X usage=0x%02X val=%d", page, usage, v))
         }
 
-        // Digitizer multi-touch contact element?
-        if let (idx, role) = roleByCookie[cookie] {
-            switch role {
-            case .x: contacts[idx].nx = Double(v) / xLogicalMax
-            case .y: contacts[idx].ny = Double(v) / yLogicalMax
-            case .tip:
-                contacts[idx].tip = (v != 0)
-                if v != 0 && !multitouchActive {
-                    multitouchActive = true
-                    err("Digitizer multi-touch frames detected — gestures enabled.")
-                }
-            }
-            if multitouchActive && contactCountCookie == nil && role == .tip { processFrame() }
-            return
-        }
-
-        // Contact-count frame boundary (only meaningful once real digitizer
-        // tips have been seen — otherwise the panel is in single-touch mode).
-        if cookie == contactCountCookie {
-            if multitouchActive { processFrame() }
-            return
-        }
-
-        // Single-finger "mouse collection" fallback. This is what most panels
-        // (incl. this SiS one) emit during normal touch on macOS.
-        if multitouchActive { return }
         var tipChanged = false
         switch (page, usage) {
         case (0x01, 0x30): pNX = Double(v) / xLogicalMax
@@ -556,108 +397,6 @@ final class TouchDriver {
         lastTapTime = t; lastTapPx = cur; lastClickCount = count
     }
 
-    // MARK: Gesture recognition (called once per HID frame)
-
-    private func processFrame() {
-        let now = ProcessInfo.processInfo.systemUptime
-        let active = contacts.filter { $0.tip }
-        let n = active.count
-
-        // Centroid in normalized coords.
-        func centroid() -> CGPoint {
-            var sx = 0.0, sy = 0.0
-            for c in active { sx += c.nx; sy += c.ny }
-            return CGPoint(x: sx / Double(max(1, n)), y: sy / Double(max(1, n)))
-        }
-
-        if n == 0 {
-            if seqActive { endSequence(now: now) }
-            return
-        }
-
-        let cen = centroid()
-        if !seqActive {
-            seqActive = true
-            seqMaxFingers = n
-            seqStart = cen
-            lastCentroid = cen
-            seqStartTime = now
-            pointerDown = false
-            swipeFired = false
-        } else {
-            seqMaxFingers = max(seqMaxFingers, n)
-        }
-
-        // Effective gesture class is the max number of fingers seen this sequence.
-        let fingers = config.gestures ? seqMaxFingers : 1
-        let startPx = screenPoint(seqStart)
-        let curPx = screenPoint(cen)
-        let lastPx = screenPoint(lastCentroid)
-
-        switch fingers {
-        case 1:
-            let p = screenPoint(cen)
-            CGWarpMouseCursorPosition(p)
-            let moved = hypot(curPx.x - startPx.x, curPx.y - startPx.y)
-            if !pointerDown && moved > dragThreshold {
-                pointerDown = true
-                postMouse(.leftMouseDown, p)
-            } else if pointerDown {
-                postMouse(.leftMouseDragged, p)
-            }
-        case 2:
-            let dx = Double(curPx.x - lastPx.x) * scrollGain
-            let dy = Double(curPx.y - lastPx.y) * scrollGain
-            if abs(dx) >= 1 || abs(dy) >= 1 { postScroll(dx: dx, dy: dy) }
-        default: // 3+ fingers → swipe to a system shortcut
-            if !swipeFired {
-                let dx = curPx.x - startPx.x, dy = curPx.y - startPx.y
-                if abs(dx) > swipeThreshold || abs(dy) > swipeThreshold {
-                    swipeFired = true
-                    if abs(dx) > abs(dy) {
-                        // Horizontal: switch Spaces. (Ctrl+←/→)
-                        postKey(dx > 0 ? 0x7B : 0x7C, control: true)
-                    } else if dy < 0 {
-                        postKey(0x7E, control: true)   // up → Mission Control (Ctrl+↑)
-                    } else {
-                        postKey(0x7D, control: true)   // down → App Exposé (Ctrl+↓)
-                    }
-                }
-            }
-        }
-
-        lastCentroid = cen
-    }
-
-    private func endSequence(now: Double) {
-        let dur = now - seqStartTime
-        let fingers = config.gestures ? seqMaxFingers : 1
-        let startPx = screenPoint(seqStart)
-        let lastPx = screenPoint(lastCentroid)
-        let moved = hypot(lastPx.x - startPx.x, lastPx.y - startPx.y)
-
-        switch fingers {
-        case 1:
-            if pointerDown {
-                postMouse(.leftMouseUp, lastPx)
-            } else if dur < tapMaxTime && moved < tapMoveTol {
-                postMouse(.leftMouseDown, startPx)   // tap → click
-                postMouse(.leftMouseUp, startPx)
-            }
-        case 2:
-            if dur < tapMaxTime && moved < tapMoveTol {
-                postMouse(.rightMouseDown, startPx, button: .right)  // two-finger tap → right click
-                postMouse(.rightMouseUp, startPx, button: .right)
-            }
-        default:
-            break // 3/4-finger swipes already fired on threshold
-        }
-
-        seqActive = false
-        pointerDown = false
-        swipeFired = false
-    }
-
     // MARK: Run loop
 
     private func ensureAccessibility() {
@@ -711,11 +450,10 @@ final class TouchDriver {
             exit(1)
         }
 
-        // Map elements + request multi-touch from the matching device, and
-        // re-do it whenever the touchscreen is (re)connected.
+        // Map elements from the matching device, and re-do it whenever the
+        // touchscreen is (re)connected.
         if let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>, let dev = set.first {
             setupElements(dev)
-            tryEnableMultitouch(dev)
         } else {
             err("WARNING: no matching device to map elements from.")
         }
@@ -723,7 +461,6 @@ final class TouchDriver {
             guard let ctx = ctx else { return }
             let me = Unmanaged<TouchDriver>.fromOpaque(ctx).takeUnretainedValue()
             me.setupElements(dev)
-            me.tryEnableMultitouch(dev)
         }
         IOHIDManagerRegisterDeviceMatchingCallback(manager, devCb, Unmanaged.passUnretained(self).toOpaque())
 
@@ -743,15 +480,15 @@ final class TouchDriver {
 
 func printUsage() {
     print("""
-    touchdriver — map a USB touchscreen to its display on macOS, with gestures
+    touchutil — map a USB touchscreen to its display on macOS
 
     USAGE:
-      touchdriver [options]
+      touchutil [options]
 
     With no options it auto-detects the touchscreen display (or uses your saved
-    --setup choice) and enables gestures.
+    --setup choice) and enables single-finger gestures.
 
-    Single-finger gestures (work on any panel, incl. single-touch ones):
+    Single-finger gestures (work on any panel):
       • move / tap        → cursor + click
       • double-tap        → double-click
       • long-press (~0.5s)→ right-click
@@ -759,14 +496,8 @@ func printUsage() {
       • edge swipe inward → left:prev Space  right:next Space
                             top:Mission Control  bottom:App Exposé
 
-    Multi-finger gestures (only if the panel emits digitizer multi-touch):
-      • 2-finger drag → scroll   • 2-finger tap → right-click
-      • 3/4-finger swipe → Spaces / Mission Control / App Exposé
-
     OPTIONS:
-      --no-gestures              Single-finger pointer only (no multi-finger gestures)
-      --try-multitouch           Attempt the Windows-style multi-touch mode switch
-                                 (off by default; can make some panels re-enumerate)
+      --no-gestures              Plain pointer only (no tap/long-press/edge gestures)
       --setup                    Interactively pick & remember the touchscreen display
       --list-displays            List displays, then exit
       --list-devices             List HID devices, then exit
@@ -798,7 +529,6 @@ while i < args.count {
     case "--list-devices": listDevices(); exit(0)
     case "--inspect": inspectDevices(); exit(0)
     case "--no-gestures": config.gestures = false
-    case "--try-multitouch": config.tryMultitouch = true
     case "--display-index": i += 1; config.displayIndex = parseInt(args[i])
     case "--display-vendor": i += 1; config.displayVendor = parseInt(args[i]).map { UInt32($0) }
     case "--display-model": i += 1; config.displayModel = parseInt(args[i]).map { UInt32($0) }
