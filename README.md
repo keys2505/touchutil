@@ -82,13 +82,15 @@ that *launches* the binary:
 1. **Input Monitoring** — to read the touchscreen.
 2. **Accessibility** — to move the cursor and synthesize clicks.
 
-The first time you run it, macOS adds the launching app (e.g. **Terminal**, or
-the `touchdriver` binary if run as a LaunchAgent) to these lists:
+On first launch the app **requests both permissions automatically** — a system
+prompt appears, and it registers the launching app (e.g. **Terminal**, or the
+`touchdriver` binary if run as a LaunchAgent) in these lists:
 
 - System Settings → Privacy & Security → **Input Monitoring**
 - System Settings → Privacy & Security → **Accessibility**
 
-Enable the entry in **both** lists, then run again.
+Approve the prompts (or enable the entry in **both** lists), then run again —
+macOS only applies a new grant on a fresh start.
 
 ## Usage
 

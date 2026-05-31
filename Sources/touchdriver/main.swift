@@ -13,7 +13,8 @@
 //
 //  Works on Apple Silicon and Intel. No kernel extension, no SIP changes.
 //
-//  Requires (granted to the app, or to the launching Terminal):
+//  Requires (granted to the app, or to the launching Terminal). The app
+//  requests both automatically on launch (and registers itself in each list):
 //    • Input Monitoring   — to read the touchscreen
 //    • Accessibility      — to move the cursor and synthesize input
 //
@@ -33,7 +34,7 @@ struct Config {
     var displayVendor: UInt32?
     var displayModel: UInt32?
     var gestures = true     // multi-finger gestures on by default
-    var tryMultitouch = false  // attempt the Device Mode feature switch (can re-enumerate)
+    var tryMultitouch = false  // attempt the Device Mode feature switch (accepted by SiS panel but macOS still delivers only the mouse collection — see README)
     var debug = false
 }
 
@@ -666,7 +667,24 @@ final class TouchDriver {
         err("Accessibility: NOT granted. Enable this app under System Settings > Privacy & Security > Accessibility, then re-run.")
     }
 
+    /// Ask macOS for Input Monitoring. IOHIDRequestAccess surfaces the system
+    /// prompt (and registers the app in the Input Monitoring list) the first
+    /// time; afterwards it just reports the current grant state.
+    private func ensureInputMonitoring() {
+        switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
+        case kIOHIDAccessTypeGranted:
+            err("Input Monitoring: granted.")
+        case kIOHIDAccessTypeDenied:
+            err("Input Monitoring: DENIED. Enable this app under System Settings > Privacy & Security > Input Monitoring, then re-run.")
+        default:
+            // Unknown / not yet decided — prompt the user.
+            let granted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+            err("Input Monitoring: \(granted ? "granted." : "NOT granted — approve the prompt (or enable under System Settings > Privacy & Security > Input Monitoring), then re-run.")")
+        }
+    }
+
     func run() {
+        ensureInputMonitoring()
         ensureAccessibility()
         bounds = resolveDisplay()
         err("Targeting display: origin=(\(Int(bounds.origin.x)),\(Int(bounds.origin.y))) size=\(Int(bounds.size.width))x\(Int(bounds.size.height))")
