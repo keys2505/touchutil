@@ -30,6 +30,7 @@ struct Config {
     var displayVendor: UInt32?  // match display by vendor number
     var displayModel: UInt32?   // match display by model number
     var rightEdgeTapAsRightClick = false
+    var debug = false
 }
 
 // MARK: - Helpers
@@ -133,6 +134,10 @@ final class TouchDriver {
         let page = IOHIDElementGetUsagePage(element)
         let v = IOHIDValueGetIntegerValue(value)
 
+        if config.debug {
+            err(String(format: "HID page=0x%02X usage=0x%02X value=%d", page, usage, v))
+        }
+
         // X (0x30) / Y (0x31) on Generic Desktop (0x01) or Digitizer (0x0D)
         if usage == 0x30 && (page == 0x01 || page == 0x0D) {
             let lo = IOHIDElementGetLogicalMin(element)
@@ -144,7 +149,8 @@ final class TouchDriver {
             let hi = IOHIDElementGetLogicalMax(element)
             if hi > lo { normY = Double(v - lo) / Double(hi - lo) }
             if touching { post(.leftMouseDragged, point()) }
-        } else if usage == 0x42 && page == 0x0D {  // Tip Switch
+        } else if (usage == 0x42 && page == 0x0D)   // Digitizer Tip Switch
+                || (usage == 0x01 && page == 0x09) { // Button 1 (some SiS panels)
             if v == 1 && !touching {
                 touching = true
                 post(.leftMouseDown, point())
@@ -252,6 +258,7 @@ while i < args.count {
     case "--display-model": i += 1; config.displayModel = parseInt(args[i]).map { UInt32($0) }
     case "--vendor-id": i += 1; config.vendorID = parseInt(args[i])
     case "--product-id": i += 1; config.productID = parseInt(args[i])
+    case "--debug": config.debug = true
     default:
         err("Unknown option: \(a)")
         printUsage(); exit(2)
