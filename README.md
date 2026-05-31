@@ -45,12 +45,20 @@ Then grant **Input Monitoring** and **Accessibility** to `touchdriver` once (the
 installer prints the exact commands). That's it — it auto-detects the
 touchscreen and starts at every login.
 
+The installer puts `touchdriver.app` (a background app, bundle id
+`com.eriproject.touchdriver`) in `/Applications`, symlinks the CLI to
+`/usr/local/bin/touchdriver` for `--setup` / `--list-*`, and registers the
+login agent.
+
 To remove it:
 
 ```bash
-./scripts/uninstall.sh          # remove agent + binary
+./scripts/uninstall.sh          # remove app + agent + CLI link, revoke permissions
 ./scripts/uninstall.sh --purge  # also delete saved config (~/.config/touchdriver)
 ```
+
+Because it's a proper app bundle, `uninstall.sh` revokes the Input Monitoring /
+Accessibility permissions automatically via `tccutil reset … com.eriproject.touchdriver`.
 
 ### Manual build (optional)
 
@@ -128,11 +136,12 @@ touchdriver --display-index 1  # one-off override (also remembered)
 | `--debug` | Log raw HID page/usage/value (useful for diagnosing other panels) |
 | `-h`, `--help` | Show help |
 
-> **Note on permissions and rebuilds:** the binary is ad-hoc code-signed during
-> the build. Because rebuilding changes the binary, macOS may ask you to
-> re-grant **Input Monitoring** / **Accessibility** after a rebuild. The driver
-> only prompts for Accessibility when it isn't already granted — it won't nag
-> you on every run once permission is in place.
+> **Note on permissions and rebuilds:** the app bundle is ad-hoc code-signed
+> with the stable identifier `com.eriproject.touchdriver`. Because rebuilding
+> changes the binary's code hash, macOS may ask you to re-grant **Input
+> Monitoring** / **Accessibility** after a rebuild. The driver only prompts for
+> Accessibility when it isn't already granted — it won't nag you on every run
+> once permission is in place, and `uninstall.sh` revokes both via `tccutil`.
 
 ## Run automatically at login
 
