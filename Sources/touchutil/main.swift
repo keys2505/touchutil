@@ -478,6 +478,8 @@ final class TouchDriver {
 
 // MARK: - Argument parsing
 
+let version = "1.0.0"
+
 func printUsage() {
     print("""
     touchutil — map a USB touchscreen to its display on macOS
@@ -508,6 +510,7 @@ func printUsage() {
       --vendor-id  0xVVVV        Match a specific touch device
       --product-id 0xPPPP        Match a specific touch device
       --debug                    Log raw HID page/usage/value
+      --version                  Print version and exit
       -h, --help                 Show this help
     """)
 }
@@ -524,16 +527,32 @@ while i < args.count {
     let a = args[i]
     switch a {
     case "-h", "--help": printUsage(); exit(0)
+    case "--version": print("touchutil \(version)"); exit(0)
     case "--setup": runSetup(); exit(0)
     case "--list-displays": listDisplays(); exit(0)
     case "--list-devices": listDevices(); exit(0)
     case "--inspect": inspectDevices(); exit(0)
     case "--no-gestures": config.gestures = false
-    case "--display-index": i += 1; config.displayIndex = parseInt(args[i])
-    case "--display-vendor": i += 1; config.displayVendor = parseInt(args[i]).map { UInt32($0) }
-    case "--display-model": i += 1; config.displayModel = parseInt(args[i]).map { UInt32($0) }
-    case "--vendor-id": i += 1; config.vendorID = parseInt(args[i])
-    case "--product-id": i += 1; config.productID = parseInt(args[i])
+    case "--display-index":
+        i += 1
+        guard i < args.count, let v = parseInt(args[i]) else { err("--display-index requires a value"); exit(2) }
+        config.displayIndex = v
+    case "--display-vendor":
+        i += 1
+        guard i < args.count, let v = parseInt(args[i]) else { err("--display-vendor requires a value"); exit(2) }
+        config.displayVendor = UInt32(v)
+    case "--display-model":
+        i += 1
+        guard i < args.count, let v = parseInt(args[i]) else { err("--display-model requires a value"); exit(2) }
+        config.displayModel = UInt32(v)
+    case "--vendor-id":
+        i += 1
+        guard i < args.count, let v = parseInt(args[i]) else { err("--vendor-id requires a value"); exit(2) }
+        config.vendorID = v
+    case "--product-id":
+        i += 1
+        guard i < args.count, let v = parseInt(args[i]) else { err("--product-id requires a value"); exit(2) }
+        config.productID = v
     case "--debug": config.debug = true
     default:
         err("Unknown option: \(a)"); printUsage(); exit(2)

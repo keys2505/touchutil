@@ -40,6 +40,22 @@ clicks/drags there — so a tap lands where you tap.
 
 ## Install
 
+### Option A — pre-built binary (no Xcode needed)
+
+1. Download the latest `touchutil.zip` from the [Releases](https://github.com/keys2505/touchutil/releases/latest) page.
+2. Unzip and run the installer:
+
+```bash
+unzip touchutil.zip
+cd touchutil
+chmod +x scripts/*.sh
+./scripts/install.sh
+```
+
+### Option B — build from source
+
+Requires Xcode Command Line Tools (`xcode-select --install`):
+
 ```bash
 git clone https://github.com/keys2505/touchutil.git
 cd touchutil
@@ -102,6 +118,15 @@ Touch the screen — the cursor jumps to your finger and clicks/drags. Press
 switch from each report, maps the normalized coordinates onto the chosen
 display, and posts cursor/click events via `CGEvent`. A reconfiguration
 callback refreshes the target when you rearrange or hot-plug displays.
+
+## Contributing
+
+Bug reports are welcome — please open a GitHub issue and include:
+- Your macOS version
+- Your touchscreen model and the output of `touchutil --list-devices`
+- What you expected vs. what happened
+
+For code changes, open an issue first to discuss before sending a PR. This project is intentionally minimal — patches that add complexity without a clear use case are unlikely to be merged.
 
 ## License
 
