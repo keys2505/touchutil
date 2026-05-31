@@ -102,4 +102,9 @@ Logs:    /tmp/touchutil.err.log
 Verify:  pgrep -la touchutil && tail -3 /tmp/touchutil.err.log
 Pick a specific display:  touchutil --setup
 Uninstall:                $REPO_ROOT/scripts/uninstall.sh
+
+To enable debug output without reinstalling:
+  launchctl stop gui/$(id -u)/com.touchutil.agent
+  $EXEC --debug
+  (Ctrl+C to stop, then launchctl start gui/$(id -u)/com.touchutil.agent to resume normal)
 EOF

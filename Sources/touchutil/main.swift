@@ -35,8 +35,9 @@ struct Config {
     var displayIndex: Int?
     var displayVendor: UInt32?
     var displayModel: UInt32?
-    var gestures = true     // single-finger tap/long-press/edge gestures on by default
+    var gestures = true
     var debug = false
+    var debugLog = false    // write debug output to /tmp/touchutil.debug.log instead of stderr
 }
 
 struct SavedConfig: Codable {
@@ -63,8 +64,20 @@ func saveConfig(_ c: SavedConfig) {
 
 // MARK: - Helpers
 
+let debugLogURL = URL(fileURLWithPath: "/tmp/touchutil.debug.log")
+var debugLogHandle: FileHandle? = nil
+
 func err(_ s: String) {
     FileHandle.standardError.write((s + "\n").data(using: .utf8)!)
+}
+
+func debugOut(_ s: String) {
+    let line = s + "\n"
+    if let h = debugLogHandle {
+        h.write(line.data(using: .utf8)!)
+    } else {
+        FileHandle.standardError.write(line.data(using: .utf8)!)
+    }
 }
 
 func activeDisplays() -> [CGDirectDisplayID] {
@@ -296,7 +309,7 @@ final class TouchDriver {
         let v = IOHIDValueGetIntegerValue(value)
 
         if config.debug {
-            err(String(format: "page=0x%02X usage=0x%02X val=%d", page, usage, v))
+            debugOut(String(format: "page=0x%02X usage=0x%02X val=%d", page, usage, v))
         }
 
         var tipChanged = false
@@ -509,7 +522,8 @@ func printUsage() {
       --display-model M          Match target display by model number
       --vendor-id  0xVVVV        Match a specific touch device
       --product-id 0xPPPP        Match a specific touch device
-      --debug                    Log raw HID page/usage/value
+      --debug                    Log raw HID page/usage/value to stderr
+      --debug-log                Log raw HID page/usage/value to /tmp/touchutil.debug.log
       --version                  Print version and exit
       -h, --help                 Show this help
     """)
@@ -554,6 +568,12 @@ while i < args.count {
         guard i < args.count, let v = parseInt(args[i]) else { err("--product-id requires a value"); exit(2) }
         config.productID = v
     case "--debug": config.debug = true
+    case "--debug-log":
+        config.debug = true
+        config.debugLog = true
+        FileManager.default.createFile(atPath: debugLogURL.path, contents: nil)
+        debugLogHandle = try? FileHandle(forWritingTo: debugLogURL)
+        debugLogHandle?.seekToEndOfFile()
     default:
         err("Unknown option: \(a)"); printUsage(); exit(2)
     }
