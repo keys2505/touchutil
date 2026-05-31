@@ -27,6 +27,12 @@ lipo -create -output "$OUT_DIR/touchdriver" \
 
 rm -f "$OUT_DIR/touchdriver-arm64" "$OUT_DIR/touchdriver-x86_64"
 
+# Code-sign (ad-hoc) so the binary has a stable identity for macOS privacy
+# permissions. Note: rebuilding changes the binary, so you may need to
+# re-grant Input Monitoring / Accessibility after a rebuild.
+echo "Code-signing (ad-hoc)..."
+codesign --force --sign - "$OUT_DIR/touchdriver"
+
 echo
 echo "Built: $OUT_DIR/touchdriver"
 file "$OUT_DIR/touchdriver"

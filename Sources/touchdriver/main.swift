@@ -29,8 +29,32 @@ struct Config {
     var displayIndex: Int?      // index into active display list
     var displayVendor: UInt32?  // match display by vendor number
     var displayModel: UInt32?   // match display by model number
-    var rightEdgeTapAsRightClick = false
     var debug = false
+}
+
+/// Persisted choice so the touchscreen display is remembered across runs.
+struct SavedConfig: Codable {
+    var displayVendor: UInt32
+    var displayModel: UInt32
+}
+
+func configURL() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".config/touchdriver/config.json")
+}
+
+func loadSavedConfig() -> SavedConfig? {
+    guard let data = try? Data(contentsOf: configURL()) else { return nil }
+    return try? JSONDecoder().decode(SavedConfig.self, from: data)
+}
+
+func saveConfig(_ c: SavedConfig) {
+    let url = configURL()
+    try? FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let data = try? JSONEncoder().encode(c) {
+        try? data.write(to: url)
+    }
 }
 
 // MARK: - Helpers
@@ -47,7 +71,7 @@ func activeDisplays() -> [CGDirectDisplayID] {
     return displays
 }
 
-// MARK: - List modes
+// MARK: - List / setup modes
 
 func listDisplays() {
     let mainID = CGMainDisplayID()
@@ -60,7 +84,6 @@ func listDisplays() {
                      Int(b.size.width), Int(b.size.height),
                      CGDisplayVendorNumber(d), CGDisplayModelNumber(d), main))
     }
-    print("\nPick the touchscreen with --display-index N, or --display-vendor V --display-model M.")
 }
 
 func listDevices() {
@@ -84,6 +107,24 @@ func listDevices() {
     }
 }
 
+func runSetup() {
+    listDisplays()
+    print("\nEnter the index of the touchscreen display: ", terminator: "")
+    guard let line = readLine(),
+          let idx = Int(line.trimmingCharacters(in: .whitespaces)) else {
+        err("Invalid input."); exit(1)
+    }
+    let displays = activeDisplays()
+    guard idx >= 0, idx < displays.count else {
+        err("Index out of range."); exit(1)
+    }
+    let d = displays[idx]
+    let v = CGDisplayVendorNumber(d), m = CGDisplayModelNumber(d)
+    saveConfig(SavedConfig(displayVendor: v, displayModel: m))
+    print("Saved. Touchscreen display remembered (vendor=\(v) model=\(m)).")
+    print("Run `touchdriver` with no arguments from now on.")
+}
+
 // MARK: - Driver
 
 final class TouchDriver {
@@ -99,21 +140,48 @@ final class TouchDriver {
         self.config = config
     }
 
+    /// Decide which display the touchscreen maps to.
+    /// Priority: explicit flags > saved config > auto-pick (largest external).
     private func resolveDisplay() -> CGRect {
         let displays = activeDisplays()
+        let mainID = CGMainDisplayID()
+
+        // 1. Explicit display index (and remember it).
         if let idx = config.displayIndex, idx >= 0, idx < displays.count {
-            return CGDisplayBounds(displays[idx])
+            let d = displays[idx]
+            saveConfig(SavedConfig(displayVendor: CGDisplayVendorNumber(d),
+                                   displayModel: CGDisplayModelNumber(d)))
+            return CGDisplayBounds(d)
         }
+
+        // 2. Explicit vendor/model (and remember it).
         if let v = config.displayVendor, let m = config.displayModel {
             for d in displays where CGDisplayVendorNumber(d) == v && CGDisplayModelNumber(d) == m {
+                saveConfig(SavedConfig(displayVendor: v, displayModel: m))
                 return CGDisplayBounds(d)
             }
         }
-        // Fallback: a non-main display positioned outside the main one, else main.
-        let mainID = CGMainDisplayID()
-        for d in displays where d != mainID {
-            return CGDisplayBounds(d)
+
+        // 3. Previously saved choice.
+        if let saved = loadSavedConfig() {
+            for d in displays where CGDisplayVendorNumber(d) == saved.displayVendor
+                && CGDisplayModelNumber(d) == saved.displayModel {
+                err("Using saved touchscreen display (vendor=\(saved.displayVendor) model=\(saved.displayModel)).")
+                return CGDisplayBounds(d)
+            }
         }
+
+        // 4. Auto-pick: the largest external (non-main) display.
+        let externals = displays.filter { $0 != mainID }
+        if let pick = externals.max(by: {
+            let a = CGDisplayBounds($0).size, b = CGDisplayBounds($1).size
+            return (a.width * a.height) < (b.width * b.height)
+        }) {
+            err("Auto-selected touchscreen display vendor=\(CGDisplayVendorNumber(pick)) model=\(CGDisplayModelNumber(pick)). Use --setup to lock a specific one.")
+            return CGDisplayBounds(pick)
+        }
+
+        // 5. Last resort: main display.
         return CGDisplayBounds(mainID)
     }
 
@@ -161,19 +229,24 @@ final class TouchDriver {
         }
     }
 
-    func run() {
-        // Request Accessibility (also registers the app in the Settings list).
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(opts)
-        err("Accessibility trusted: \(trusted)")
-        if !trusted {
-            err("--> Enable this app under System Settings > Privacy & Security > Accessibility, then re-run.")
+    /// Prompt for Accessibility only if it has not already been granted.
+    private func ensureAccessibility() {
+        if AXIsProcessTrusted() {
+            err("Accessibility: granted.")
+            return
         }
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(opts)
+        err("Accessibility: NOT granted. Enable this app under System Settings > Privacy & Security > Accessibility, then re-run. (This prompt only appears until you grant it.)")
+    }
+
+    func run() {
+        ensureAccessibility()
 
         bounds = resolveDisplay()
         err("Targeting display: origin=(\(Int(bounds.origin.x)),\(Int(bounds.origin.y))) size=\(Int(bounds.size.width))x\(Int(bounds.size.height))")
 
-        // Update bounds when displays change.
+        // Refresh target bounds when displays change (hot-plug / rearrange).
         CGDisplayRegisterReconfigurationCallback({ _, _, ctx in
             guard let ctx = ctx else { return }
             let me = Unmanaged<TouchDriver>.fromOpaque(ctx).takeUnretainedValue()
@@ -220,37 +293,41 @@ func printUsage() {
     USAGE:
       touchdriver [options]
 
+    With no options it auto-detects the touchscreen display (or uses your saved
+    choice from --setup). Run --setup once if auto-detection picks the wrong screen.
+
     OPTIONS:
+      --setup                    Interactively pick & remember the touchscreen display
       --list-displays            List displays with index/vendor/model, then exit
       --list-devices             List HID devices (find your touchscreen), then exit
-      --display-index N          Map touch to display at index N (see --list-displays)
-      --display-vendor V         Match target display by vendor number
+      --display-index N          Map touch to display at index N (also remembered)
+      --display-vendor V         Match target display by vendor number (also remembered)
       --display-model M          Match target display by model number
       --vendor-id  0xVVVV        Match a specific touch device (default: any touchscreen)
       --product-id 0xPPPP        Match a specific touch device
+      --debug                    Log raw HID page/usage/value (for diagnosing panels)
       -h, --help                 Show this help
 
     EXAMPLES:
+      touchdriver                       # auto-detect / use saved choice
+      touchdriver --setup               # pick and remember the touchscreen display
       touchdriver --list-displays
-      touchdriver --display-index 1
-      touchdriver --vendor-id 0x0457 --product-id 0x0819 --display-index 1
     """)
 }
 
 func parseInt(_ s: String) -> Int? {
-    if s.hasPrefix("0x") || s.hasPrefix("0X") {
-        return Int(s.dropFirst(2), radix: 16)
-    }
+    if s.hasPrefix("0x") || s.hasPrefix("0X") { return Int(s.dropFirst(2), radix: 16) }
     return Int(s)
 }
 
 var config = Config()
-var args = Array(CommandLine.arguments.dropFirst())
+let args = Array(CommandLine.arguments.dropFirst())
 var i = 0
 while i < args.count {
     let a = args[i]
     switch a {
     case "-h", "--help": printUsage(); exit(0)
+    case "--setup": runSetup(); exit(0)
     case "--list-displays": listDisplays(); exit(0)
     case "--list-devices": listDevices(); exit(0)
     case "--display-index": i += 1; config.displayIndex = parseInt(args[i])

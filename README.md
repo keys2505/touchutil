@@ -73,53 +73,55 @@ Enable the entry in **both** lists, then run again.
 
 ## Usage
 
-1. Find your touchscreen and target display:
+Just run it — it auto-detects the touchscreen display:
 
-   ```bash
-   touchdriver --list-devices    # confirm the touchscreen is detected
-   touchdriver --list-displays   # note the index of the touchscreen display
-   ```
+```bash
+touchdriver
+```
 
-   Example `--list-displays` output:
+Touch the screen and the cursor jumps to your finger and clicks/drags there.
+Press **Ctrl+C** to stop.
 
-   ```
-   Active displays:
-     [0] id=1785464001  origin=(0,0)     size=1920x1080  vendor=25001 model=45075  [MAIN]
-     [1] id=583419904   origin=(0,1080)  size=1920x1080  vendor=19083 model=6432
-   ```
+**Auto-detection** picks the largest external (non-main) display. If that's the
+wrong screen, lock the correct one once and it's remembered:
 
-2. Run it, pointing touch at the right display:
+```bash
+touchdriver --setup        # lists displays, asks you to pick one, saves it
+```
 
-   ```bash
-   touchdriver --display-index 1
-   ```
+Your choice is stored in `~/.config/touchdriver/config.json` and reused on every
+run — no flags needed afterwards. Matching is by display vendor/model, so it
+survives reboots, re-arrangement, and unplug/replug.
 
-   You can also pin a specific touch device and/or display:
+To inspect or pin things manually:
 
-   ```bash
-   touchdriver --vendor-id 0x0457 --product-id 0x0819 \
-               --display-vendor 19083 --display-model 6432
-   ```
-
-3. Touch the screen — the cursor jumps to your finger and clicks/drags there.
-   Press **Ctrl+C** to stop.
+```bash
+touchdriver --list-devices     # confirm the touchscreen is detected
+touchdriver --list-displays    # see display indices/vendor/model
+touchdriver --display-index 1  # one-off override (also remembered)
+```
 
 ### Options
 
 | Option | Description |
 | --- | --- |
+| *(none)* | Auto-detect the touchscreen display, or use your saved `--setup` choice |
+| `--setup` | Interactively pick & remember the touchscreen display |
 | `--list-displays` | List displays with index, vendor and model, then exit |
 | `--list-devices` | List HID devices (find your touchscreen), then exit |
-| `--display-index N` | Map touch to the display at index `N` |
-| `--display-vendor V` | Match the target display by vendor number |
+| `--display-index N` | Map touch to the display at index `N` (also remembered) |
+| `--display-vendor V` | Match the target display by vendor number (also remembered) |
 | `--display-model M` | Match the target display by model number |
 | `--vendor-id 0xVVVV` | Match a specific touch device (default: any touchscreen) |
 | `--product-id 0xPPPP` | Match a specific touch device |
+| `--debug` | Log raw HID page/usage/value (useful for diagnosing other panels) |
 | `-h`, `--help` | Show help |
 
-If no display option is given, the driver maps to the first non-main display
-(falling back to the main display). Matching by vendor/model is the most robust
-across reboots and re-arrangement.
+> **Note on permissions and rebuilds:** the binary is ad-hoc code-signed during
+> the build. Because rebuilding changes the binary, macOS may ask you to
+> re-grant **Input Monitoring** / **Accessibility** after a rebuild. The driver
+> only prompts for Accessibility when it isn't already granted — it won't nag
+> you on every run once permission is in place.
 
 ## Run automatically at login
 
