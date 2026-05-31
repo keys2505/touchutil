@@ -21,6 +21,9 @@ targets:
     platform: macOS
     sources:
       - path: TouchDriverKit
+    dependencies:
+      - sdk: DriverKit.framework
+      - sdk: HIDDriverKit.framework
     settings:
       base:
         SDKROOT: driverkit
