@@ -1,0 +1,59 @@
+name: TouchDriver
+options:
+  bundleIdPrefix: com.eriproject.touchdriver
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # No team yet — Personal Team / manual signing is configured per-target.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+
+targets:
+
+  # ----------------------------------------------------------------------
+  # Driver Extension (.dext) — the actual driver. Built against DriverKit SDK.
+  # ----------------------------------------------------------------------
+  TouchDriverKit:
+    type: driver-extension
+    platform: macOS
+    sources:
+      - path: TouchDriverKit
+    settings:
+      base:
+        SDKROOT: driverkit
+        PRODUCT_BUNDLE_IDENTIFIER: com.eriproject.touchdriver.driverkit
+        PRODUCT_NAME: TouchDriverKit
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: TouchDriverKit/Info.plist
+        CODE_SIGN_ENTITLEMENTS: TouchDriverKit/TouchDriverKit.entitlements
+        CLANG_CXX_LANGUAGE_STANDARD: "gnu++17"
+        DEAD_CODE_STRIPPING: YES
+        # iig generates the C++ glue from the .iig automatically.
+
+  # ----------------------------------------------------------------------
+  # Host app — embeds and activates the dext via SystemExtensions.
+  # ----------------------------------------------------------------------
+  TouchDriverHost:
+    type: application
+    platform: macOS
+    sources:
+      - path: HostApp
+    dependencies:
+      - target: TouchDriverKit
+        embed: true
+        copy:
+          destination: productsDirectory
+          subpath: Contents/Library/SystemExtensions
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.eriproject.touchdriver.host
+        PRODUCT_NAME: TouchDriver
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: HostApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: HostApp/TouchDriverHost.entitlements
+        SWIFT_VERSION: "5.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        MARKETING_VERSION: "1.0"
