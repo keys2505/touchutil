@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build universal binary
+        run: bash scripts/build-universal.sh
+
+      - name: Package zip
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd build
+          zip -r "../touchutil-${VERSION}.zip" touchutil.app
+          cd ..
+          echo "ZIP=touchutil-${VERSION}.zip" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Compute sha256
+        run: |
+          SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
+          echo "SHA256=${SHA}" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          generate_release_notes: true
+
+      - name: Update homebrew-tap
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/keys2505/homebrew-tap.git /tmp/homebrew-tap
+
+          FORMULA="/tmp/homebrew-tap/Casks/touchutil.rb"
+
+          sed -i '' "s|version \".*\"|version \"${VERSION}\"|" "$FORMULA"
+          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA256}\"|" "$FORMULA"
+
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/touchutil.rb
+          git commit -m "touchutil ${VERSION}"
+          git push
