@@ -1,6 +1,7 @@
 # Swift / SwiftPM
 .build/
 .swiftpm/
+build/
 *.o
 *.dSYM/
 DerivedData/

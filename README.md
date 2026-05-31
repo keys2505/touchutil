@@ -39,10 +39,13 @@ chmod +x scripts/*.sh
 ./scripts/build-universal.sh
 ```
 
+This produces `build/touchdriver` (a universal binary). It uses `swiftc` +
+`lipo`, so only the Command Line Tools are needed — full Xcode is not.
+
 Install the binary system-wide:
 
 ```bash
-sudo cp "$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/touchdriver" /usr/local/bin/touchdriver
+sudo cp build/touchdriver /usr/local/bin/touchdriver
 ```
 
 Or, for a quick local (current-arch only) build:
