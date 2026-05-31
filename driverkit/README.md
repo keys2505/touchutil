@@ -50,10 +50,27 @@ systemextensionsctl developer on
 
 | File | Purpose |
 |------|---------|
-| `TouchDriverKit/TouchDriverKit.iig` | DriverKit interface (compiled by `iig`) — subclasses `IOUserHIDEventService` |
-| `TouchDriverKit/TouchDriverKit.cpp` | Implementation skeleton — `Start`/`Stop`, `enableMultitouchMode()`, `handleReport()` |
-| `TouchDriverKit/Info.plist` | `IOKitPersonalities` matching VID `0x0457` / PID `0x0819` with a high probe score |
-| `TouchDriverKit/TouchDriverKit.entitlements` | The managed DriverKit/HID entitlements to request from Apple |
+**Driver extension (`TouchDriverKit/`):**
+
+| File | Purpose |
+|------|---------|
+| `TouchDriverKit.iig` | DriverKit interface (compiled by `iig`) — subclasses `IOUserHIDEventService` |
+| `TouchDriverKit.cpp` | Implementation skeleton — `Start`/`Stop`, `enableMultitouchMode()`, `handleReport()` |
+| `Info.plist` | `IOKitPersonalities` matching VID `0x0457` / PID `0x0819` with a high probe score |
+| `TouchDriverKit.entitlements` | The managed DriverKit/HID entitlements to request from Apple |
+
+**Host app (`HostApp/`):** a dext can't be installed directly — it ships inside
+an app's `Contents/Library/SystemExtensions/` and is activated at runtime.
+
+| File | Purpose |
+|------|---------|
+| `TouchDriverHostApp.swift` | Minimal SwiftUI app with Install / Uninstall buttons + status |
+| `ExtensionManager.swift` | Drives `OSSystemExtensionRequest` activation/deactivation and reports state |
+| `TouchDriverHost.entitlements` | Host entitlements (`system-extension.install`, sandbox) |
+
+The host app embeds the dext as a target dependency in Xcode (Build Phase:
+"Embed System Extensions"). Run the host app → click Install → approve in
+System Settings. Once active, the driver runs on its own.
 
 ## Two TODOs that carry the real work
 

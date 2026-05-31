@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Host-app entitlements. The host must declare it manages a system
+        extension whose bundle id begins with the team identifier prefix.
+        Like the dext entitlements, driverkit.* are managed and require the
+        Apple-approved provisioning profile.
+    -->
+
+    <!-- App Sandbox: required for distribution; dext activation is allowed. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+
+    <!-- Allows this app to request activation of its embedded system extension. -->
+    <key>com.apple.developer.system-extension.install</key>
+    <true/>
+</dict>
+</plist>
