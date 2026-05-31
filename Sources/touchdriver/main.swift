@@ -250,6 +250,23 @@ final class TouchDriver {
     private var pNX = 0.0, pNY = 0.0
     private var pTip = false, pDown = false
 
+    // Single-finger gesture recognizer state.
+    private var fingerDown = false, mousePressed = false, movedBeyond = false
+    private var edgeFired = false, longFired = false, edgeResolved = false
+    private var nearL = false, nearR = false, nearT = false, nearB = false
+    private var sStartPx = CGPoint.zero
+    private var longTimer: Timer?
+    private var lastTapTime = 0.0
+    private var lastTapPx = CGPoint.zero
+    private var lastClickCount = 0
+    // Single-finger tunables.
+    private let moveTol = 10.0
+    private let longPressDelay = 0.5
+    private let edgeMarginN = 0.05
+    private let edgeSwipeThreshold = 100.0
+    private let doubleTapInterval = 0.30
+    private let doubleTapDist = 25.0
+
     // Gesture sequence state.
     private var seqActive = false
     private var seqMaxFingers = 0
@@ -407,26 +424,102 @@ final class TouchDriver {
         // Single-finger "mouse collection" fallback. This is what most panels
         // (incl. this SiS one) emit during normal touch on macOS.
         if multitouchActive { return }
+        var tipChanged = false
         switch (page, usage) {
-        case (0x01, 0x30): pNX = Double(v) / xLogicalMax; handlePrimary()
-        case (0x01, 0x31): pNY = Double(v) / yLogicalMax; handlePrimary()
-        case (0x09, 0x01): pTip = (v != 0); handlePrimary()
-        default: break
+        case (0x01, 0x30): pNX = Double(v) / xLogicalMax
+        case (0x01, 0x31): pNY = Double(v) / yLogicalMax
+        case (0x09, 0x01): let t = (v != 0); tipChanged = (t != pTip); pTip = t
+        default: return
+        }
+        if !config.gestures { simplePrimary(); return }
+        if tipChanged { pTip ? gestureDown() : gestureUp() }
+        else if fingerDown { gestureMove() }
+    }
+
+    private func now() -> Double { ProcessInfo.processInfo.systemUptime }
+
+    /// Plain pointer (used with --no-gestures): press on touch, drag, release.
+    private func simplePrimary() {
+        let p = screenPoint(CGPoint(x: pNX, y: pNY))
+        if pTip && !pDown { pDown = true; postMouse(.leftMouseDown, p) }
+        else if pTip && pDown { postMouse(.leftMouseDragged, p) }
+        else if !pTip && pDown { pDown = false; postMouse(.leftMouseUp, p) }
+    }
+
+    /// Click (or multi-click) with a proper click-state so double-tap → double-click.
+    private func postClick(_ p: CGPoint, _ button: CGMouseButton, _ count: Int) {
+        CGWarpMouseCursorPosition(p)
+        let down: CGEventType = (button == .right) ? .rightMouseDown : .leftMouseDown
+        let up: CGEventType = (button == .right) ? .rightMouseUp : .leftMouseUp
+        if let d = CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button) {
+            d.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count))); d.post(tap: .cghidEventTap)
+        }
+        if let u = CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: p, mouseButton: button) {
+            u.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count))); u.post(tap: .cghidEventTap)
         }
     }
 
-    /// Reliable single-finger pointer: move, press on touch, drag, release.
-    private func handlePrimary() {
-        let p = screenPoint(CGPoint(x: pNX, y: pNY))
-        if pTip && !pDown {
-            pDown = true
-            postMouse(.leftMouseDown, p)
-        } else if pTip && pDown {
-            postMouse(.leftMouseDragged, p)
-        } else if !pTip && pDown {
-            pDown = false
-            postMouse(.leftMouseUp, p)
+    private func startLongTimer() {
+        cancelLongTimer()
+        let t = Timer(timeInterval: longPressDelay, repeats: false) { [weak self] _ in self?.longPressFired() }
+        RunLoop.current.add(t, forMode: .common)
+        longTimer = t
+    }
+    private func cancelLongTimer() { longTimer?.invalidate(); longTimer = nil }
+
+    private func longPressFired() {
+        guard fingerDown, !movedBeyond, !edgeFired, !longFired else { return }
+        longFired = true
+        postClick(sStartPx, .right, 1)   // long-press → right-click
+    }
+
+    private func gestureDown() {
+        fingerDown = true; mousePressed = false; movedBeyond = false
+        edgeFired = false; longFired = false
+        sStartPx = screenPoint(CGPoint(x: pNX, y: pNY))
+        let m = edgeMarginN
+        nearL = pNX < m; nearR = pNX > 1 - m; nearT = pNY < m; nearB = pNY > 1 - m
+        edgeResolved = !(nearL || nearR || nearT || nearB)
+        CGWarpMouseCursorPosition(sStartPx)
+        startLongTimer()
+    }
+
+    private func gestureMove() {
+        let cur = screenPoint(CGPoint(x: pNX, y: pNY))
+        CGWarpMouseCursorPosition(cur)
+        let dist = hypot(cur.x - sStartPx.x, cur.y - sStartPx.y)
+        if dist <= moveTol { return }
+        if !movedBeyond { movedBeyond = true; cancelLongTimer() }
+        if edgeFired { return }
+        if !edgeResolved {
+            if dist < edgeSwipeThreshold { return }   // wait until clearly a swipe
+            let dx = cur.x - sStartPx.x, dy = cur.y - sStartPx.y
+            var fired = false
+            if nearL && dx > abs(dy) { postKey(0x7B, control: true); fired = true }       // left edge → prev Space
+            else if nearR && -dx > abs(dy) { postKey(0x7C, control: true); fired = true } // right edge → next Space
+            else if nearT && dy > abs(dx) { postKey(0x7E, control: true); fired = true }  // top edge → Mission Control
+            else if nearB && -dy > abs(dx) { postKey(0x7D, control: true); fired = true } // bottom edge → App Exposé
+            if fired { edgeFired = true; return }
+            edgeResolved = true   // not an inward edge swipe → treat as a drag
         }
+        if !mousePressed { mousePressed = true; postMouse(.leftMouseDown, sStartPx) }
+        postMouse(.leftMouseDragged, cur)
+    }
+
+    private func gestureUp() {
+        fingerDown = false; cancelLongTimer()
+        let cur = screenPoint(CGPoint(x: pNX, y: pNY))
+        if mousePressed { postMouse(.leftMouseUp, cur); mousePressed = false; return }
+        if edgeFired || longFired { return }   // gesture already acted
+        // Tap → click, with double-tap → double-click.
+        let t = now()
+        var count = 1
+        if t - lastTapTime < doubleTapInterval,
+           hypot(cur.x - lastTapPx.x, cur.y - lastTapPx.y) < doubleTapDist {
+            count = min(lastClickCount + 1, 3)
+        }
+        postClick(cur, .left, count)
+        lastTapTime = t; lastTapPx = cur; lastClickCount = count
     }
 
     // MARK: Gesture recognition (called once per HID frame)
@@ -596,11 +689,19 @@ func printUsage() {
       touchdriver [options]
 
     With no options it auto-detects the touchscreen display (or uses your saved
-    --setup choice) and enables gestures:
-      • 1 finger      → move cursor, tap to click, drag
-      • 2-finger drag → scroll
-      • 2-finger tap  → right-click
-      • 3/4-finger swipe → switch Spaces (←/→), Mission Control (↑), App Exposé (↓)
+    --setup choice) and enables gestures.
+
+    Single-finger gestures (work on any panel, incl. single-touch ones):
+      • move / tap        → cursor + click
+      • double-tap        → double-click
+      • long-press (~0.5s)→ right-click
+      • drag              → move windows / select
+      • edge swipe inward → left:prev Space  right:next Space
+                            top:Mission Control  bottom:App Exposé
+
+    Multi-finger gestures (only if the panel emits digitizer multi-touch):
+      • 2-finger drag → scroll   • 2-finger tap → right-click
+      • 3/4-finger swipe → Spaces / Mission Control / App Exposé
 
     OPTIONS:
       --no-gestures              Single-finger pointer only (no multi-finger gestures)
