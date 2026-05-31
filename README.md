@@ -36,11 +36,26 @@ clicks/drags there — so a tap lands where you tap.
 ## Requirements
 
 - macOS 11 or later
-- Xcode Command Line Tools (`xcode-select --install`) — full Xcode not needed
+- [Homebrew](https://brew.sh) (recommended) — or Xcode Command Line Tools for manual install
 
 ## Install
 
-### Option A — pre-built binary (no Xcode needed)
+### Option A — Homebrew (easiest, recommended)
+
+```bash
+brew install --cask keys2505/tap/touchutil
+```
+
+No Xcode, no manual steps. Homebrew installs the app, sets up the login agent, and starts it automatically.
+
+To uninstall:
+
+```bash
+brew uninstall --cask touchutil        # remove app + stop login agent
+brew uninstall --cask --zap touchutil  # also delete saved config
+```
+
+### Option B — pre-built binary (no Xcode needed)
 
 1. Download the latest `touchutil.zip` from the [Releases](https://github.com/keys2505/touchutil/releases/latest) page.
 2. Unzip and run the installer:
@@ -52,7 +67,14 @@ chmod +x scripts/*.sh
 ./scripts/install.sh
 ```
 
-### Option B — build from source
+To uninstall:
+
+```bash
+./scripts/uninstall.sh          # remove app, agent, CLI link, permissions
+./scripts/uninstall.sh --purge  # also delete saved config
+```
+
+### Option C — build from source
 
 Requires Xcode Command Line Tools (`xcode-select --install`):
 
@@ -70,13 +92,6 @@ automatically.
 On first launch, grant **Input Monitoring** and **Accessibility** to
 `touchutil` (the installer prints the exact commands). macOS only applies a new
 permission on a fresh start, so re-run after granting.
-
-To remove:
-
-```bash
-./scripts/uninstall.sh          # remove app, agent, CLI link; revoke permissions
-./scripts/uninstall.sh --purge  # also delete saved config
-```
 
 ## Usage
 
