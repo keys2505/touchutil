@@ -1,6 +1,6 @@
 cask "touchutil" do
-  version "1.0.0"
-  sha256 "placeholder"
+  version "1.1.0"
+  sha256 "7a611060296498e4262163e29408cc7981b476295218eacd5a7a2b2694671a15"
 
   url "https://github.com/keys2505/touchutil/releases/download/v#{version}/touchutil-#{version}.zip"
   name "touchutil"
@@ -11,7 +11,34 @@ cask "touchutil" do
   binary "#{appdir}/touchutil.app/Contents/MacOS/touchutil"
 
   postflight do
+    exec_path = "#{appdir}/touchutil.app/Contents/MacOS/touchutil"
     plist_path = "#{Dir.home}/Library/LaunchAgents/com.touchutil.agent.plist"
+    plist_content = <<~XML
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+          <key>Label</key>
+          <string>com.touchutil.agent</string>
+          <key>ProgramArguments</key>
+          <array>
+              <string>#{exec_path}</string>
+          </array>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>KeepAlive</key>
+          <true/>
+          <key>StandardOutPath</key>
+          <string>/tmp/touchutil.out.log</string>
+          <key>StandardErrorPath</key>
+          <string>/tmp/touchutil.err.log</string>
+      </dict>
+      </plist>
+    XML
+
+    FileUtils.mkdir_p "#{Dir.home}/Library/LaunchAgents"
+    File.write(plist_path, plist_content)
+
     system_command "/bin/launchctl",
       args: ["bootstrap", "gui/#{Process.uid}", plist_path],
       sudo: false
