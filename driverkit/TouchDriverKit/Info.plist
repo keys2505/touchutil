@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.eriproject.touchdriver.driverkit</string>
+    <key>CFBundleName</key>
+    <string>TouchDriverKit</string>
+    <key>CFBundleExecutable</key>
+    <string>TouchDriverKit</string>
+    <key>CFBundlePackageType</key>
+    <string>DEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>OSBundleUsageDescription</key>
+    <string>Enables multi-touch on external SiS USB touchscreens.</string>
+
+    <!-- DriverKit module entry point: <CFBundleIdentifier>:<C++ class name> -->
+    <key>OSBundleDextEntryPoint</key>
+    <string>com.eriproject.touchdriver.driverkit:TouchDriverKit</string>
+
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>TouchDriverKit</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.eriproject.touchdriver.driverkit</string>
+            <key>CFBundleIdentifierKernel</key>
+            <string>com.apple.kpi.iokit</string>
+
+            <!-- The DriverKit class that implements this personality. -->
+            <key>IOClass</key>
+            <string>IOUserHIDEventService</string>
+            <key>IOUserClass</key>
+            <string>TouchDriverKit</string>
+
+            <!-- Match the SiS HID Touch Controller specifically. -->
+            <key>IOProviderClass</key>
+            <string>IOHIDInterface</string>
+            <key>VendorID</key>
+            <integer>1111</integer> <!-- 0x0457 -->
+            <key>ProductID</key>
+            <integer>2073</integer> <!-- 0x0819 -->
+
+            <!-- Run in its own dext server process. -->
+            <key>IOUserServerName</key>
+            <string>com.eriproject.touchdriver.driverkit</string>
+
+            <!-- Probe score above IOHIDFamily's default so we win the match. -->
+            <key>IOProbeScore</key>
+            <integer>100000</integer>
+        </dict>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,47 @@
+//
+//  TouchDriverKit.iig — DriverKit interface definition (compiled by `iig`)
+//
+//  A HIDDriverKit event service that claims the SiS HID Touch Controller
+//  (VID 0x0457 / PID 0x0819) *below* the default IOHIDFamily mouse binding,
+//  switches the panel into multi-touch ("Device Mode") via a feature report,
+//  and re-dispatches the per-contact digitizer reports as multi-touch events.
+//
+//  This is the piece the user-space `touchdriver` tool cannot do: macOS binds
+//  this panel as a single-pointer mouse, so a user-space IOHIDManager only
+//  ever sees the mouse collection. A dext matches first and owns the device.
+//
+//  Build requires full Xcode + DriverKit SDK and an Apple-approved
+//  com.apple.developer.driverkit.transport.hid entitlement. See README.md.
+//
+
+#ifndef TouchDriverKit_h
+#define TouchDriverKit_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+#include <HIDDriverKit/IOUserHIDEventService.iig>
+
+class TouchDriverKit: public IOUserHIDEventService
+{
+public:
+    // Lifecycle.
+    virtual bool init() override;
+    virtual void free() override;
+
+    virtual kern_return_t Start(IOService *provider) override;
+    virtual kern_return_t Stop(IOService *provider) override;
+
+    // Called by HIDDriverKit for every input report from the device.
+    // We parse digitizer contacts here and emit multi-touch events.
+    virtual void handleReport(uint64_t timestamp,
+                              uint8_t *report,
+                              uint32_t reportLength,
+                              IOHIDReportType type,
+                              uint32_t reportID) override LOCALONLY;
+
+    // Send the Device Mode feature report (usage 0x0D/0x52 = 3) so the panel
+    // starts emitting multi-touch digitizer reports instead of mouse reports.
+    kern_return_t enableMultitouchMode() LOCALONLY;
+};
+
+#endif /* TouchDriverKit_h */
