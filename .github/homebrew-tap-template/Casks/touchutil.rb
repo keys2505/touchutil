@@ -44,6 +44,23 @@ cask "touchutil" do
       sudo: false
   end
 
+  caveats <<~EOS
+    touchutil is now running in the background.
+
+    Before your touchscreen works, grant two permissions in:
+      System Settings → Privacy & Security
+
+      • Input Monitoring → enable touchutil
+      • Accessibility    → enable touchutil
+
+    The app retries automatically once permissions are granted.
+
+    If your touch lands on the wrong display, run:
+      touchutil --setup
+
+    Logs: /tmp/touchutil.err.log
+  EOS
+
   uninstall launchctl: "com.touchutil.agent",
             delete:    "#{Dir.home}/Library/LaunchAgents/com.touchutil.agent.plist"
 
