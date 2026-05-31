@@ -147,9 +147,13 @@ func listDisplays() {
             let fingers = cap.contactCountMax > 0
                 ? "\(cap.fingerGroups) simultaneous (declared max \(cap.contactCountMax))"
                 : "\(cap.fingerGroups) simultaneous"
-            let multi = cap.fingerGroups >= 2 ? "multi-touch" : "single-touch"
+            let multi = cap.fingerGroups >= 2 ? "multi-touch capable (hardware)" : "single-touch"
             print(String(format: "  %@  vendor=0x%04X product=0x%04X  →  %@, %@ fingers",
                          name, vid, pid, multi, fingers))
+        }
+        if !devices.isEmpty {
+            print("\n  'multi-touch capable (hardware)' = the chip advertises it; macOS may still")
+            print("  receive only single-finger reports unless the panel accepts a mode switch.")
         }
     }
     print("\nNote: macOS can't map a touch device to a specific display automatically;")
@@ -346,7 +350,32 @@ final class TouchDriver {
 
     // MARK: HID element setup
 
+    /// Attempt to switch the panel into multi-touch mode the way Windows does:
+    /// write the digitizer "Device Mode" feature (usage 0x0D/0x52). Many panels
+    /// only emit multi-touch reports after this; if the firmware ignores it,
+    /// nothing changes and we stay in single-finger mode.
+    private func tryEnableMultitouch(_ dev: IOHIDDevice) {
+        guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { return }
+        var found = false
+        for e in elements where IOHIDElementGetType(e) == kIOHIDElementTypeFeature {
+            let p = IOHIDElementGetUsagePage(e), u = IOHIDElementGetUsage(e)
+            // Device Mode (0x52) or Input Mode-style selectors; request multi-input.
+            if p == 0x0D && (u == 0x52 || u == 0x53) {
+                for candidate in [3, 2] {   // 3 = multi-input (Windows), 2 = fallback
+                    let val = IOHIDValueCreateWithIntegerValue(kCFAllocatorDefault, e, 0, candidate)
+                    let r = IOHIDDeviceSetValue(dev, e, val)
+                    err(String(format: "Requested multi-touch (feature 0x%02X=%d): %@",
+                               u, candidate, r == kIOReturnSuccess ? "ok" : "failed 0x\(String(r, radix: 16))"))
+                    if r == kIOReturnSuccess { found = true; break }
+                }
+            }
+        }
+        if !found { err("Could not enable multi-touch via feature report (panel may not support it on macOS).") }
+    }
+
     private func setupElements(_ dev: IOHIDDevice) {
+        roleByCookie.removeAll()
+        contactCountCookie = nil
         guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { return }
         // Group X/Y/Tip by parent collection; keep only groups that have all three
         // (this excludes the single-finger mouse collection which has no digitizer tip).
@@ -660,12 +689,21 @@ final class TouchDriver {
             exit(1)
         }
 
-        // Map elements from the first matching digitizer device.
+        // Map elements + request multi-touch from the matching device, and
+        // re-do it whenever the touchscreen is (re)connected.
         if let set = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>, let dev = set.first {
             setupElements(dev)
+            tryEnableMultitouch(dev)
         } else {
             err("WARNING: no matching device to map elements from.")
         }
+        let devCb: IOHIDDeviceCallback = { ctx, _, _, dev in
+            guard let ctx = ctx else { return }
+            let me = Unmanaged<TouchDriver>.fromOpaque(ctx).takeUnretainedValue()
+            me.setupElements(dev)
+            me.tryEnableMultitouch(dev)
+        }
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, devCb, Unmanaged.passUnretained(self).toOpaque())
 
         let cb: IOHIDValueCallback = { ctx, _, _, value in
             guard let ctx = ctx else { return }
