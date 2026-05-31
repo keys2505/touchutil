@@ -33,6 +33,7 @@ struct Config {
     var displayVendor: UInt32?
     var displayModel: UInt32?
     var gestures = true     // multi-finger gestures on by default
+    var tryMultitouch = false  // attempt the Device Mode feature switch (can re-enumerate)
     var debug = false
 }
 
@@ -251,6 +252,7 @@ final class TouchDriver {
     // Single-finger "mouse collection" fallback (Button 0x09/0x01 + GD X/Y).
     // Used when the panel does not emit digitizer multi-touch frames.
     private var multitouchActive = false
+    private var multitouchAttempted = false
     private var pNX = 0.0, pNY = 0.0
     private var pTip = false, pDown = false
 
@@ -355,6 +357,8 @@ final class TouchDriver {
     /// only emit multi-touch reports after this; if the firmware ignores it,
     /// nothing changes and we stay in single-finger mode.
     private func tryEnableMultitouch(_ dev: IOHIDDevice) {
+        guard config.tryMultitouch, !multitouchAttempted else { return }
+        multitouchAttempted = true
         guard let elements = IOHIDDeviceCopyMatchingElements(dev, nil, 0) as? [IOHIDElement] else { return }
         var found = false
         for e in elements where IOHIDElementGetType(e) == kIOHIDElementTypeFeature {
@@ -743,6 +747,8 @@ func printUsage() {
 
     OPTIONS:
       --no-gestures              Single-finger pointer only (no multi-finger gestures)
+      --try-multitouch           Attempt the Windows-style multi-touch mode switch
+                                 (off by default; can make some panels re-enumerate)
       --setup                    Interactively pick & remember the touchscreen display
       --list-displays            List displays, then exit
       --list-devices             List HID devices, then exit
@@ -774,6 +780,7 @@ while i < args.count {
     case "--list-devices": listDevices(); exit(0)
     case "--inspect": inspectDevices(); exit(0)
     case "--no-gestures": config.gestures = false
+    case "--try-multitouch": config.tryMultitouch = true
     case "--display-index": i += 1; config.displayIndex = parseInt(args[i])
     case "--display-vendor": i += 1; config.displayVendor = parseInt(args[i]).map { UInt32($0) }
     case "--display-model": i += 1; config.displayModel = parseInt(args[i]).map { UInt32($0) }
