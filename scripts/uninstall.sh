@@ -1,10 +1,9 @@
 #!/bin/bash
 #
-# uninstall.sh — stop and remove touchutil from macOS.
+# uninstall.sh — stop and fully remove touchutil from macOS.
 #
-# Removes the LaunchAgent, the app bundle, and the CLI symlink, and revokes the
-# Input Monitoring / Accessibility permissions via tccutil. Pass --purge to also
-# delete the saved configuration (~/.config/touchutil).
+# Options:
+#   --purge   also delete saved config (~/.config/touchutil)
 #
 set -euo pipefail
 
@@ -30,23 +29,19 @@ echo "==> Stopping the agent..."
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
 rm -f "$PLIST"
 
-# 2. Kill any lingering process (by exact name, catches hand-started copies too).
+# 2. Kill any lingering process.
 echo "==> Stopping any running touchutil process..."
 pkill -x touchutil 2>/dev/null || true
-sleep 1
-pkill -9 -x touchutil 2>/dev/null || true
 
-# 3. Revoke privacy permissions by bundle id.
-echo "==> Revoking privacy permissions ($BUNDLE_ID)..."
+# 3. Revoke privacy permissions.
+echo "==> Revoking privacy permissions..."
 tccutil reset Accessibility "$BUNDLE_ID" 2>/dev/null || true
-tccutil reset ListenEvent  "$BUNDLE_ID" 2>/dev/null || true
+tccutil reset ListenEvent   "$BUNDLE_ID" 2>/dev/null || true
 
 # 4. Remove the app bundle and CLI symlink (sudo).
-if [ -e "$APP_DST" ] || [ -L "$CLI_LINK" ]; then
-    echo "==> Removing $APP_DST and $CLI_LINK (may prompt for your password)..."
-    sudo rm -rf "$APP_DST"
-    sudo rm -f "$CLI_LINK"
-fi
+echo "==> Removing app and CLI link (may prompt for your password)..."
+sudo rm -rf "$APP_DST"  2>/dev/null || true
+sudo rm -f  "$CLI_LINK" 2>/dev/null || true
 
 # 5. Optionally remove saved config.
 if [ "$PURGE" -eq 1 ]; then
@@ -55,11 +50,9 @@ if [ "$PURGE" -eq 1 ]; then
 fi
 
 # 6. Clean up logs.
-rm -f /tmp/touchutil.out.log /tmp/touchutil.err.log
+rm -f /tmp/touchutil.out.log /tmp/touchutil.err.log /tmp/touchutil.debug.log
 
-cat <<EOF
-
-✅ Uninstalled. The app, login agent, CLI link, and privacy permissions have
-   been removed. If a stale "touchutil" row still shows in System Settings >
-   Privacy & Security, it is harmless and clears after a logout/restart.
-EOF
+echo ""
+echo "✅ Uninstalled. App, login agent, CLI link, and permissions removed."
+echo "   If a stale 'touchutil' row still shows in System Settings → Privacy & Security,"
+echo "   it will clear automatically after a logout or restart."

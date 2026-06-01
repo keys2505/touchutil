@@ -10,6 +10,11 @@ cask "touchutil" do
   app "touchutil.app"
   binary "#{appdir}/touchutil.app/Contents/MacOS/touchutil"
 
+  preflight do
+    # Remove any existing installation (manual or previous cask) to avoid conflicts.
+    system_command "/bin/rm", args: ["-rf", "/Applications/touchutil.app"], sudo: true
+  end
+
   postflight do
     exec_path = "#{appdir}/touchutil.app/Contents/MacOS/touchutil"
     plist_path = "#{Dir.home}/Library/LaunchAgents/com.touchutil.agent.plist"
