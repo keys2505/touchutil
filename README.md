@@ -1,6 +1,6 @@
 # touchutil
 
-Make an external **USB touchscreen** click where you tap on macOS.
+Make an external **USB touchscreen** work naturally on macOS — tap, scroll, drag, and edge swipes.
 
 ## The problem this solves
 
@@ -10,28 +10,23 @@ doesn't click where you touch — it clicks wherever the system cursor already
 happens to be, on whichever display. There's no native macOS setting to map an
 external touchscreen's absolute touch input to its own display.
 
-`touchutil` fixes exactly that one issue: it reads the touchscreen's absolute
-coordinates via `IOHIDManager` and warps the cursor to your finger, then
-clicks/drags there — so a tap lands where you tap.
+`touchutil` fixes this: it reads the touchscreen's absolute coordinates via
+`IOHIDManager` and maps every gesture to the right display.
 
 > **Tested locally** with a **Goojodoq portable touchscreen monitor**
 > (SiS HID Touch Controller). Other HID digitizer touchscreens should work too,
 > but that's the panel it's been verified on.
 
 - ✅ Apple Silicon + Intel (universal binary)
-- ✅ No kernel extension, no SIP changes
-- ✅ Single-finger: tap, double-tap, long-press, scroll, drag, edge swipes
+- ✅ No kernel extension, no SIP changes, no paid developer account
+- ✅ Tap, double-tap, scroll, drag, long-press, edge swipes
 
-## Limitations / disclaimer
+## Limitations
 
-- **This is not a driver.** It's a small userspace tool that reads HID input and
-  moves the cursor. It does not install a kernel extension or system driver, and
-  it does not require a paid Apple Developer account.
-- **Single-finger only.** It does **not** support multi-finger gestures (pinch,
-  rotate, two-finger scroll, etc.). True multi-touch on an external display
-  would require a DriverKit HID driver, which needs a paid Apple Developer
-  account to sign and notarize. This tool deliberately uses `IOHIDManager`
-  (userspace, free, no entitlements) — the trade-off is single-finger only.
+- **Single-finger only.** Multi-finger gestures (pinch, two-finger scroll, etc.)
+  require a DriverKit HID driver, which needs a paid Apple Developer account to
+  sign and notarize. This tool uses `IOHIDManager` — free and userspace — and
+  single-finger is the trade-off.
 
 ## Requirements
 
@@ -46,11 +41,13 @@ clicks/drags there — so a tap lands where you tap.
 brew install --cask keys2505/tap/touchutil
 ```
 
-No Xcode, no manual steps. Homebrew installs the app, sets up the login agent, and starts it automatically.
+No Xcode, no manual steps. Homebrew installs the app, sets up the login agent,
+and starts it automatically.
 
-**After install — grant permissions (required, one-time)**
+**After install — grant permissions (one-time only)**
 
-macOS will block touchutil until you grant two permissions under **System Settings → Privacy & Security**:
+macOS will block touchutil until you grant two permissions under
+**System Settings → Privacy & Security**:
 
 | Permission | Why it's needed |
 | --- | --- |
@@ -59,9 +56,10 @@ macOS will block touchutil until you grant two permissions under **System Settin
 
 1. Open System Settings → Privacy & Security → **Input Monitoring** → enable `touchutil`
 2. Open System Settings → Privacy & Security → **Accessibility** → enable `touchutil`
-3. The app retries automatically every few seconds once permissions are granted — no need to relaunch manually.
+3. The app retries automatically once permissions are granted — no need to relaunch.
 
-> These permissions stay local on your Mac. touchutil reads touch input only to move your cursor — it sends nothing anywhere.
+> These permissions stay local on your Mac. touchutil reads touch input only to
+> move your cursor — it sends nothing anywhere.
 
 To uninstall:
 
@@ -109,11 +107,12 @@ automatically. After install, grant the two permissions described above.
 ```bash
 touchutil           # auto-detects the touchscreen display
 touchutil --setup   # pick the touchscreen display and remember it
+touchutil --test    # open gesture-feedback window for testing
 ```
 
-Touch the screen — the cursor jumps to your finger and clicks/drags. Press
-**Ctrl+C** to stop. Your `--setup` choice is saved to
-`~/.config/touchutil/config.json` and reused on every run.
+Touch the screen — the cursor follows your finger and responds to gestures.
+Your `--setup` choice is saved to `~/.config/touchutil/config.json` and reused
+on every run.
 
 ### Supported gestures
 
@@ -122,26 +121,25 @@ Touch the screen — the cursor jumps to your finger and clicks/drags. Press
 | Tap | Click |
 | Double-tap | Double-click |
 | Long-press (~0.5s) | Right-click |
-| Move | Move cursor |
-| Drag vertically | Scroll up / down |
-| Drag horizontally | Drag — move windows, select text |
-| Edge swipe inward from left | Previous Space |
-| Edge swipe inward from right | Next Space |
-| Edge swipe inward from top | Mission Control |
-| Edge swipe inward from bottom | App Exposé |
+| Vertical swipe | Scroll up / down |
+| Hold 0.35s then drag horizontally | Select text / move windows |
+| Edge swipe from any edge | Mission Control (show all windows) |
 
 ### Options
 
 | Option | Description |
 | --- | --- |
 | `--setup` | Pick & remember the touchscreen display |
-| `--no-gestures` | Plain pointer only (no tap / long-press / edge-swipe) |
+| `--test` | Open a gesture-feedback window on the touchscreen |
+| `--no-gestures` | Plain pointer only (no tap / long-press / scroll / edge-swipe) |
 | `--list-displays` | List displays and detected touch devices |
 | `--list-devices` | List all HID devices |
 | `--inspect` | Dump a touchscreen's HID capabilities |
 | `--display-index N` | Map touch to display index `N` (remembered) |
 | `--vendor-id 0xVVVV` / `--product-id 0xPPPP` | Match a specific touch device |
-| `--debug` | Log raw HID page/usage/value |
+| `--debug` | Log raw HID events to stderr |
+| `--debug-log` | Log raw HID events to `/tmp/touchutil.debug.log` |
+| `--version` | Print version and exit |
 | `-h`, `--help` | Show help |
 
 ## Troubleshooting
@@ -152,13 +150,18 @@ Touch the screen — the cursor jumps to your finger and clicks/drags. Press
 | Cursor doesn't move | Grant **Accessibility**, then re-run |
 | `--list-devices` shows nothing | Plug in the touchscreen's **USB data cable** (separate from video) |
 | Touch lands on the wrong screen | Run `--setup`, or pass `--display-index` |
+| Scroll feels like text selection | Swipe more vertically — horizontal swipes drag instead of scroll |
+| Not sure what gesture was detected | Run `touchutil --test` to see real-time gesture feedback |
 
 ## How it works
 
 `IOHIDManager` matches the touchscreen digitizer, reads absolute X/Y + tip
-switch from each report, maps the normalized coordinates onto the chosen
-display, and posts cursor/click events via `CGEvent`. A reconfiguration
-callback refreshes the target when you rearrange or hot-plug displays.
+switch from each HID report, and maps the normalized coordinates onto the
+chosen display. Gestures are recognised from movement direction and timing.
+Click events are posted via `CGEvent` without manual click-count manipulation —
+macOS counts consecutive taps naturally, exactly like a real mouse.
+A display-reconfiguration callback refreshes the target when you rearrange or
+hot-plug displays.
 
 ## Contributing
 
@@ -167,7 +170,9 @@ Bug reports are welcome — please open a GitHub issue and include:
 - Your touchscreen model and the output of `touchutil --list-devices`
 - What you expected vs. what happened
 
-For code changes, open an issue first to discuss before sending a PR. This project is intentionally minimal — patches that add complexity without a clear use case are unlikely to be merged.
+For code changes, open an issue first to discuss before sending a PR. This
+project is intentionally minimal — patches that add complexity without a clear
+use case are unlikely to be merged.
 
 ## License
 

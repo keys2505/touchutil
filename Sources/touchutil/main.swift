@@ -634,7 +634,7 @@ final class TouchDriver {
 
 // MARK: - Argument parsing
 
-let version = "1.0.0"
+let version = "1.2.0"
 
 func printUsage() {
     print("""
