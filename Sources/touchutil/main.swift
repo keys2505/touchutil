@@ -235,11 +235,13 @@ final class TouchDriver {
     private let dragHoldDelay = 0.35  // hold 350ms before horizontal drag enables selection
     private let edgeMarginN = 0.12    // 12% from edge triggers edge-swipe mode
     private let edgeSwipeThreshold = 40.0  // px to travel before edge key fires
-    private let doubleTapInterval = 0.25   // window to wait for second tap
-    private let doubleTapDist = 25.0
+    private let doubleTapInterval = 0.6    // max gap between two taps to count as double-tap
+    private let doubleTapDist = 70.0       // max finger travel between taps (px)
     private let scrollScale = 3.0
 
     var testWindow: TestWindow? = nil   // set when running --test
+    private var signalSource: DispatchSourceSignal? = nil
+    private var appDelegate: NSObject? = nil
 
     init(config: Config) { self.config = config }
 
@@ -391,15 +393,25 @@ final class TouchDriver {
     /// system double-click window (~500ms) would be escalated to clickCount=2,
     /// causing one physical tap to behave like a double-click.
     private func postClick(_ p: CGPoint, _ button: CGMouseButton, _ count: Int = 1) {
+        // Tap-level routing — each fixes a different problem:
+        //  • Single left click → annotated-session tap. The HID tap double-fires
+        //    a single click in some apps (YouTube play button), so use the
+        //    session tap which delivers it exactly once.
+        //  • Right-click & double-click → HID tap. The session tap silently drops
+        //    right-click context menus and clickState=2 double-clicks; the HID
+        //    tap delivers them reliably.
+        let isSingleLeft = (button == .left && count == 1)
+        let tap: CGEventTapLocation = isSingleLeft ? .cgAnnotatedSessionEventTap : .cghidEventTap
+
         let down: CGEventType = (button == .right) ? .rightMouseDown : .leftMouseDown
         let up:   CGEventType = (button == .right) ? .rightMouseUp   : .leftMouseUp
         if let d = CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button) {
             d.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count)))
-            d.post(tap: .cgAnnotatedSessionEventTap)
+            d.post(tap: tap)
         }
         if let u = CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: p, mouseButton: button) {
             u.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count)))
-            u.post(tap: .cgAnnotatedSessionEventTap)
+            u.post(tap: tap)
         }
     }
 
@@ -430,8 +442,8 @@ final class TouchDriver {
 
     private func postScroll(deltaY: Double) {
         // Use pixel units for smooth continuous scrolling.
-        // Negate: finger moves up (negative deltaY) → scroll content up (positive).
-        let px = Int32((-deltaY * scrollScale).rounded())
+        // Finger moves down → content scrolls down (natural touch direction).
+        let px = Int32((deltaY * scrollScale).rounded())
         guard px != 0 else { return }
         CGEvent(scrollWheelEvent2Source: source, units: .pixel,
                 wheelCount: 1, wheel1: px, wheel2: 0, wheel3: 0)?
@@ -509,22 +521,14 @@ final class TouchDriver {
         if !edgeResolved {
             if dist < edgeSwipeThreshold { return }
             let dx = cur.x - sStartPx.x, dy = cur.y - sStartPx.y
-            var fired = false
-            let isCornerBL = nearL && nearB   // bottom-left corner
-            if isCornerBL && (dx > abs(dy) || -dy > abs(dx)) {
-                // Bottom-left corner swipe (any inward direction) → Mission Control
-                testWindow?.send(.gesture("⬆ Edge → All Windows", .systemPurple))
-                postMissionControl(); fired = true
-            } else if nearL && !nearB && dx > abs(dy) {
-                // Left edge only → Prev Space
-                testWindow?.send(.gesture("⬅ Edge → Prev Space", .systemPurple))
-                postKey(0x7B, control: true); fired = true
-            } else if nearR && -dx > abs(dy) {
-                // Right edge → Next Space
-                testWindow?.send(.gesture("➡ Edge → Next Space", .systemPurple))
-                postKey(0x7C, control: true); fired = true
+            // Only the bottom-left corner triggers Mission Control. Left/right
+            // edges fall through to normal drag so window resizing works there.
+            if nearL && nearB && (dx > abs(dy) || -dy > abs(dx)) {
+                testWindow?.send(.gesture("⬆ Corner → All Windows", .systemPurple))
+                postMissionControl()
+                edgeFired = true
+                return
             }
-            if fired { edgeFired = true; return }
             edgeResolved = true
         }
         // Drag/select only if: held long enough AND clearly more horizontal than vertical.
@@ -647,30 +651,51 @@ final class TouchDriver {
         signal(SIGUSR1, SIG_IGN)
         let sigSrc = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
         let driverRef = self
-        sigSrc.setEventHandler {
-            if driverRef.testWindow == nil {
-                let overlay = TestWindow()
-                overlay.open(on: driverRef.boundsForTest())
-                driverRef.testWindow = overlay
-            }
-            NSApplication.shared.setActivationPolicy(.regular)
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            driverRef.testWindow?.send(.gesture("👋 Opened from Finder", .systemGreen))
-        }
+        sigSrc.setEventHandler { driverRef.showTestWindow() }
         sigSrc.resume()
+        self.signalSource = sigSrc   // retain so it isn't deallocated
 
         err("Touch driver running. Press Ctrl+C to stop.")
-        // Always run through NSApplication so distributed notifications and
-        // UI events are handled even when no test window is open at launch.
-        NSApplication.shared.setActivationPolicy(testWindow != nil ? .regular : .accessory)
-        if testWindow != nil { NSApplication.shared.activate(ignoringOtherApps: true) }
-        NSApplication.shared.run()
+        // Run through NSApplication so the reopen event (double-click in Finder
+        // while already running) and signals are handled.
+        let app = NSApplication.shared
+        let delegate = AppReopenDelegate(driver: self)
+        app.delegate = delegate
+        self.appDelegate = delegate   // retain
+        app.setActivationPolicy(testWindow != nil ? .regular : .accessory)
+        if testWindow != nil { app.activate(ignoringOtherApps: true) }
+        app.run()
+    }
+
+    /// Open the gesture test window (or bring it to front if already open).
+    func showTestWindow() {
+        if testWindow == nil {
+            let overlay = TestWindow()
+            overlay.open(on: boundsForTest())
+            testWindow = overlay
+        }
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        testWindow?.send(.gesture("👋 Gesture tester", .systemGreen))
+    }
+}
+
+/// Handles the Finder "reopen" event (double-click the app while it's already
+/// running as the LaunchAgent). macOS routes the open to the existing instance
+/// instead of spawning a new process, so we show the test window here.
+final class AppReopenDelegate: NSObject, NSApplicationDelegate {
+    weak var driver: TouchDriver?
+    init(driver: TouchDriver) { self.driver = driver }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        driver?.showTestWindow()
+        return true
     }
 }
 
 // MARK: - Argument parsing
 
-let version = "1.2.4"
+let version = "1.2.5"
 
 func printUsage() {
     print("""

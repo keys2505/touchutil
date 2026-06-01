@@ -122,10 +122,8 @@ on every run.
 | Double-tap | Double-click |
 | Long-press (~0.5s) | Right-click |
 | Vertical swipe | Scroll up / down |
-| Hold 0.35s then drag horizontally | Select text / move windows |
+| Hold 0.35s then drag horizontally | Select text / move / resize windows |
 | Swipe inward from bottom-left corner | Mission Control (show all windows) |
-| Swipe inward from left edge | Previous Space |
-| Swipe inward from right edge | Next Space |
 
 ### Options
 
