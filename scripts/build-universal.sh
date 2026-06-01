@@ -10,16 +10,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-SRC="Sources/touchutil/main.swift Sources/touchutil/TestWindow.swift"
+SRC=(Sources/touchutil/main.swift Sources/touchutil/TestWindow.swift)
 OUT_DIR="build"
 DEPLOY="11.0"
 mkdir -p "$OUT_DIR"
 
 echo "Compiling arm64 slice..."
-swiftc -O -target "arm64-apple-macosx${DEPLOY}"  "$SRC" -o "$OUT_DIR/touchutil-arm64"
+swiftc -O -target "arm64-apple-macosx${DEPLOY}"  "${SRC[@]}" -o "$OUT_DIR/touchutil-arm64"
 
 echo "Compiling x86_64 slice..."
-swiftc -O -target "x86_64-apple-macosx${DEPLOY}" "$SRC" -o "$OUT_DIR/touchutil-x86_64"
+swiftc -O -target "x86_64-apple-macosx${DEPLOY}" "${SRC[@]}" -o "$OUT_DIR/touchutil-x86_64"
 
 echo "Creating universal binary with lipo..."
 lipo -create -output "$OUT_DIR/touchutil" \
