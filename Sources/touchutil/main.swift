@@ -228,6 +228,7 @@ final class TouchDriver {
     private var dragTimer: Timer?
     private var lastTapTime = 0.0
     private var lastTapPx = CGPoint.zero
+    private var lastClickCount = 0
     // Single-finger tunables.
     private let moveTol = 10.0
     private let longPressDelay = 0.5
@@ -286,9 +287,8 @@ final class TouchDriver {
     }
 
     private func postMouse(_ type: CGEventType, _ p: CGPoint, button: CGMouseButton = .left) {
-        CGWarpMouseCursorPosition(p)
         CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: button)?
-            .post(tap: .cghidEventTap)
+            .post(tap: .cgAnnotatedSessionEventTap)
     }
 
     private func postKey(_ key: CGKeyCode, control: Bool) {
@@ -385,15 +385,22 @@ final class TouchDriver {
         else if pDown      { pDown = false; postMouse(.leftMouseUp, p) }
     }
 
-    /// Send a click. Does NOT set clickState — macOS measures timing between
-    /// consecutive clicks naturally and increments clickCount itself, exactly as
-    /// a real mouse does. Setting clickState manually causes double-toggle bugs.
-    private func postClick(_ p: CGPoint, _ button: CGMouseButton) {
-        CGWarpMouseCursorPosition(p)
+    /// Send a click with an explicit clickState so macOS and apps know exactly
+    /// whether this is a single (1) or double (2) click — no timing ambiguity.
+    /// Without clickState, macOS infers count from timing: two taps within the
+    /// system double-click window (~500ms) would be escalated to clickCount=2,
+    /// causing one physical tap to behave like a double-click.
+    private func postClick(_ p: CGPoint, _ button: CGMouseButton, _ count: Int = 1) {
         let down: CGEventType = (button == .right) ? .rightMouseDown : .leftMouseDown
         let up:   CGEventType = (button == .right) ? .rightMouseUp   : .leftMouseUp
-        CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
-        CGEvent(mouseEventSource: source, mouseType: up,   mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
+        if let d = CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button) {
+            d.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count)))
+            d.post(tap: .cgAnnotatedSessionEventTap)
+        }
+        if let u = CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: p, mouseButton: button) {
+            u.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count)))
+            u.post(tap: .cgAnnotatedSessionEventTap)
+        }
     }
 
     private func startLongTimer() {
@@ -418,7 +425,7 @@ final class TouchDriver {
         guard fingerDown, !movedBeyond, !edgeFired, !longFired else { return }
         longFired = true
         testWindow?.send(.gesture("⚙️ Long Press → Right-click", .systemOrange))
-        postClick(sStartPx, .right)
+        postClick(sStartPx, .right, 1)
     }
 
     private func postScroll(deltaY: Double) {
@@ -432,6 +439,7 @@ final class TouchDriver {
     }
 
     private func gestureDown() {
+        if config.debug { debugOut(String(format: "DOWN  nx=%.3f ny=%.3f  t=%.3f", pNX, pNY, now())) }
         fingerDown = true; mousePressed = false; movedBeyond = false
         edgeFired = false; longFired = false; scrollMode = false; dragEnabled = false
         sStartPx = clamp(screenPoint(CGPoint(x: pNX, y: pNY)))
@@ -526,21 +534,28 @@ final class TouchDriver {
     }
 
     private func gestureUp() {
+        guard fingerDown else { return }  // ignore spurious tip=0 after gesture already ended
         fingerDown = false; cancelLongTimer(); cancelDragTimer()
         let cur = clamp(screenPoint(CGPoint(x: pNX, y: pNY)))
         testWindow?.send(.lift)
         if mousePressed { postMouse(.leftMouseUp, cur); mousePressed = false; return }
         if edgeFired || longFired || scrollMode { scrollMode = false; return }
 
-        // Tap → click. No manual clickState — macOS counts consecutive taps by timing,
-        // exactly like a real mouse. This avoids the double-toggle bug in Chrome and
-        // other apps where manual clickState=2 fires TWO zoom/action events.
+        // Tap → click. Explicit clickState tells macOS + apps exactly what this is:
+        // count=1 = single click, count=2 = double-click. This prevents macOS from
+        // inferring a double-click from timing alone (which caused one tap to behave
+        // like a double-click when two taps arrived within the 500ms system window).
         let time = now()
-        let isDoubleTap = time - lastTapTime < doubleTapInterval &&
-                          hypot(cur.x - lastTapPx.x, cur.y - lastTapPx.y) < doubleTapDist
-        testWindow?.send(.gesture(isDoubleTap ? "👆👆 Double Tap" : "👆 Tap", .systemGreen))
-        postClick(cur, .left)
-        lastTapTime = time; lastTapPx = cur
+        var count = 1
+        if time - lastTapTime < doubleTapInterval,
+           hypot(cur.x - lastTapPx.x, cur.y - lastTapPx.y) < doubleTapDist {
+            count = min(lastClickCount + 1, 3)
+        }
+        let label = count == 1 ? "👆 Tap" : count == 2 ? "👆👆 Double Tap" : "👆👆👆 Triple Tap"
+        testWindow?.send(.gesture(label, .systemGreen))
+        if config.debug { debugOut(String(format: "CLICK count=%d  t=%.3f", count, time)) }
+        postClick(cur, .left, count)
+        lastTapTime = time; lastTapPx = cur; lastClickCount = count
     }
 
     // MARK: Run loop
@@ -634,7 +649,7 @@ final class TouchDriver {
 
 // MARK: - Argument parsing
 
-let version = "1.2.0"
+let version = "1.2.1"
 
 func printUsage() {
     print("""
