@@ -90,6 +90,25 @@ func activeDisplays() -> [CGDirectDisplayID] {
     return displays
 }
 
+/// Human-readable name for a display. Some panels (e.g. cheap touchscreens)
+/// report no EDID name — macOS returns "" — so fall back to a usable label.
+func displayName(_ id: CGDirectDisplayID) -> String {
+    for screen in NSScreen.screens {
+        if let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+           num == id {
+            let name = screen.localizedName.trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { return name }
+        }
+    }
+    return "Unnamed display"
+}
+
+/// Name of the first detected touchscreen digitizer, if any.
+func touchDeviceName() -> String? {
+    guard let dev = touchDevices().first else { return nil }
+    return IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String
+}
+
 // MARK: - List / inspect / setup modes
 
 /// All connected touchscreen digitizers (usagePage 0x0D, usage 0x04).
@@ -673,12 +692,43 @@ final class TouchDriver {
     func showTestWindow() {
         if testWindow == nil {
             let overlay = TestWindow()
+            overlay.displayOptions = buildDisplayOptions()
+            overlay.touchHardwareName = touchDeviceName()
+            overlay.onSelectDisplay = { [weak self] id in
+                self?.selectDisplay(id)
+            }
             overlay.open(on: boundsForTest())
             testWindow = overlay
         }
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
         testWindow?.send(.gesture("👋 Gesture tester", .systemGreen))
+    }
+
+    /// Build the picker list from currently connected displays.
+    private func buildDisplayOptions() -> [DisplayOption] {
+        let mainID = CGMainDisplayID()
+        let saved = loadSavedConfig()
+        return activeDisplays().enumerated().map { (i, d) in
+            let b = CGDisplayBounds(d)
+            let isMain = d == mainID
+            let isCurrent = saved.map {
+                CGDisplayVendorNumber(d) == $0.displayVendor && CGDisplayModelNumber(d) == $0.displayModel
+            } ?? false
+            // Index prefix distinguishes displays with identical names/resolutions.
+            var label = "[\(i)] \(displayName(d))  ·  \(Int(b.width))×\(Int(b.height))"
+            if isMain { label += "  (main)" }
+            if isCurrent { label += "  ✓ current" }   // your saved touchscreen pick
+            return DisplayOption(id: d, label: label, isCurrent: isCurrent)
+        }
+    }
+
+    /// Save the chosen display and switch touch mapping to it immediately.
+    private func selectDisplay(_ id: CGDirectDisplayID) {
+        let v = CGDisplayVendorNumber(id), m = CGDisplayModelNumber(id)
+        saveConfig(SavedConfig(displayVendor: v, displayModel: m))
+        bounds = CGDisplayBounds(id)
+        err("Touchscreen display set via GUI: vendor=\(v) model=\(m).")
     }
 }
 
@@ -697,7 +747,7 @@ final class AppReopenDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Argument parsing
 
-let version = "1.2.6"
+let version = "1.2.7"
 
 func printUsage() {
     print("""

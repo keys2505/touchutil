@@ -15,6 +15,13 @@ enum GestureEvent {
 
 // MARK: - Overlay window
 
+/// One selectable display shown in the picker.
+struct DisplayOption {
+    let id: CGDirectDisplayID
+    let label: String
+    let isCurrent: Bool
+}
+
 final class TestWindow: NSObject {
     private var window: NSWindow!
     private var gestureLabel: NSTextField!
@@ -22,12 +29,19 @@ final class TestWindow: NSObject {
     private var touchDot: NSView!
     private var miniScreen: NSView!
     private var clearTimer: Timer?
+    private var displayPicker: NSPopUpButton!
+
+    // Set by the driver before open(): the list of displays and what to do
+    // when the user picks one. Keeps display selection logic in the driver.
+    var displayOptions: [DisplayOption] = []
+    var onSelectDisplay: ((CGDirectDisplayID) -> Void)?
+    var touchHardwareName: String? = nil   // detected touch digitizer, shown as subtitle
 
     func open(on displayBounds: CGRect) {
         let app = NSApplication.shared
         app.setActivationPolicy(.regular)
 
-        let w: CGFloat = 460, h: CGFloat = 320
+        let w: CGFloat = 460, h: CGFloat = 380
         let origin = CGPoint(
             x: displayBounds.midX - w / 2,
             y: displayBounds.midY - h / 2
@@ -53,21 +67,49 @@ final class TestWindow: NSObject {
         guard let content = window.contentView else { return }
         content.wantsLayer = true
 
-        // Subtitle
-        let sub = label("Touch the touchscreen to see gestures", size: 12, weight: .regular,
-                        color: NSColor(white: 0.45, alpha: 1))
+        // Subtitle — show detected touch hardware so the user knows it's connected.
+        let subText = touchHardwareName.map { "Touch device detected: \($0)" }
+            ?? "⚠️ No touchscreen detected — check the USB data cable"
+        let sub = label(subText, size: 12, weight: .regular,
+                        color: NSColor(white: 0.5, alpha: 1))
         sub.frame = NSRect(x: 0, y: h - 36, width: w, height: 20)
         content.addSubview(sub)
 
+        // Display picker — choose which display is the touchscreen.
+        let pickerLabel = label("Touchscreen display:", size: 11, weight: .medium,
+                                color: NSColor(white: 0.6, alpha: 1))
+        pickerLabel.alignment = .left
+        pickerLabel.frame = NSRect(x: 20, y: h - 66, width: 140, height: 18)
+        content.addSubview(pickerLabel)
+
+        displayPicker = NSPopUpButton(frame: NSRect(x: 160, y: h - 70, width: w - 180, height: 26))
+        displayPicker.target = self
+        displayPicker.action = #selector(displayPicked)
+        for opt in displayOptions {
+            displayPicker.addItem(withTitle: opt.label)
+        }
+        // Pre-select the currently configured display.
+        if let idx = displayOptions.firstIndex(where: { $0.isCurrent }) {
+            displayPicker.selectItem(at: idx)
+        }
+        content.addSubview(displayPicker)
+
+        // Hint — macOS can't auto-map a touch panel to a display, so the user picks.
+        let hint = label("Pick the display you touch, then tap it to confirm it's mapped.",
+                         size: 10, weight: .regular, color: NSColor(white: 0.4, alpha: 1))
+        hint.alignment = .left
+        hint.frame = NSRect(x: 20, y: h - 92, width: w - 40, height: 16)
+        content.addSubview(hint)
+
         // Big gesture label
-        gestureLabel = label("Waiting for touch…", size: 34, weight: .bold, color: .white)
-        gestureLabel.frame = NSRect(x: 20, y: h / 2 - 10, width: w - 40, height: 50)
+        gestureLabel = label("Waiting for touch…", size: 32, weight: .bold, color: .white)
+        gestureLabel.frame = NSRect(x: 20, y: h / 2 - 16, width: w - 40, height: 48)
         content.addSubview(gestureLabel)
 
         // Position readout
         posLabel = label("", size: 11, weight: .regular,
                          color: NSColor(white: 0.4, alpha: 1))
-        posLabel.frame = NSRect(x: 0, y: h / 2 - 36, width: w, height: 18)
+        posLabel.frame = NSRect(x: 0, y: h / 2 - 40, width: w, height: 18)
         content.addSubview(posLabel)
 
         // Mini screen map
@@ -88,6 +130,14 @@ final class TestWindow: NSObject {
         touchDot.layer?.cornerRadius = dotSize / 2
         touchDot.alphaValue = 0
         miniScreen.addSubview(touchDot)
+    }
+
+    @objc private func displayPicked() {
+        let idx = displayPicker.indexOfSelectedItem
+        guard idx >= 0, idx < displayOptions.count else { return }
+        let opt = displayOptions[idx]
+        onSelectDisplay?(opt.id)
+        send(.gesture("✅ Display set: \(opt.label)", .systemGreen))
     }
 
     // Called from TouchDriver on every gesture event (may be called off main thread).
