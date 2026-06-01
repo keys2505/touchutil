@@ -459,9 +459,11 @@ final class TouchDriver {
         let m = edgeMarginN
         nearL = pNX < m; nearR = pNX > 1 - m; nearT = pNY < m; nearB = pNY > 1 - m
         edgeResolved = !(nearL || nearR || nearT || nearB)
-        // Don't warp cursor on touch-down — let cursor stay where it was.
-        // Warping here moves cursor over text which looks like selection during scroll.
-        // Cursor is warped only when a gesture commits: tap (postClick) or drag (postMouse).
+        // Warp the cursor to the touch point immediately on touch-down so the
+        // first tap lands on the touchscreen — not on whatever display the
+        // cursor was previously on. Harmless for scroll (no button is pressed,
+        // so the cursor just sits at the touch point without selecting).
+        CGWarpMouseCursorPosition(sStartPx)
         testWindow?.send(.touch(normX: pNX, normY: pNY))
         if config.debug {
             debugOut(String(format: "touch: nx=%.3f ny=%.3f  nearL=%d nearR=%d nearT=%d nearB=%d edgeResolved=%d",
@@ -695,7 +697,7 @@ final class AppReopenDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Argument parsing
 
-let version = "1.2.5"
+let version = "1.2.6"
 
 func printUsage() {
     print("""
