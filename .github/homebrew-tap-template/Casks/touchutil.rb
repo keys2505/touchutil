@@ -1,6 +1,6 @@
 cask "touchutil" do
   version "1.2.4"
-  sha256 "b341098b24fc6d394a830d1568d5024af5eb731e065173d436bfff6a6ee74d12"
+  sha256 "b366d3662b6c1271d262218e0e4f5fc65198c107a5c4537d326b516ca582f78b"
 
   url "https://github.com/keys2505/touchutil/releases/download/v#{version}/touchutil-#{version}.zip"
   name "touchutil"
@@ -17,8 +17,8 @@ cask "touchutil" do
       args:         ["bootout", "gui/#{Process.uid}/com.touchutil.agent"],
       sudo:         false,
       must_succeed: false
-    system_command "/bin/pkill",
-      args:         ["-x", "touchutil"],
+    system_command "/usr/bin/pkill",
+      args:         ["-x", "touchutil"], must_succeed: false,
       must_succeed: false
     # Reset permissions so the new binary can request them fresh on first launch.
     system_command "/usr/bin/tccutil",
