@@ -573,11 +573,12 @@ final class TouchDriver {
     // System Settings and the app remembers it. If not yet granted, print
     // clear instructions to stderr/log and let the run loop retry naturally.
     private func ensureAccessibility() {
-        if AXIsProcessTrusted() {
-            err("Accessibility: granted.")
-        } else {
-            err("Accessibility: not granted — open System Settings → Privacy & Security → Accessibility and enable touchutil, then re-launch.")
-        }
+        if AXIsProcessTrusted() { err("Accessibility: granted."); return }
+        // Show system prompt — this fires after a fresh install/upgrade when
+        // tccutil reset was run in the installer preflight.
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(opts)
+        err("Accessibility: not granted — approve the prompt or enable in System Settings → Privacy & Security → Accessibility.")
     }
 
     private func ensureInputMonitoring() {
@@ -585,14 +586,11 @@ final class TouchDriver {
         case kIOHIDAccessTypeGranted:
             err("Input Monitoring: granted.")
         case kIOHIDAccessTypeDenied:
-            err("Input Monitoring: denied — open System Settings → Privacy & Security → Input Monitoring and enable touchutil, then re-launch.")
+            err("Input Monitoring: denied — enable in System Settings → Privacy & Security → Input Monitoring.")
         default:
-            // Truly first run — call once to register touchutil in the list.
-            // This shows the system banner (not a blocking dialog) so the user
-            // can click through to System Settings. Never called again once
-            // the status is known (granted or denied).
+            // Unknown = fresh install or reset — show system banner once.
             IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-            err("Input Monitoring: requested — approve in System Settings → Privacy & Security → Input Monitoring, then re-launch.")
+            err("Input Monitoring: requested — approve in System Settings → Privacy & Security → Input Monitoring.")
         }
     }
 
@@ -672,7 +670,7 @@ final class TouchDriver {
 
 // MARK: - Argument parsing
 
-let version = "1.2.3"
+let version = "1.2.4"
 
 func printUsage() {
     print("""

@@ -20,7 +20,12 @@ LABEL="com.touchutil.agent"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 
-# 1. Stop any existing running instance cleanly before replacing files.
+# 1. Reset permissions so the new binary can request them fresh on first launch.
+echo "==> Resetting permissions for new binary..."
+tccutil reset Accessibility com.eriproject.touchutil 2>/dev/null || true
+tccutil reset ListenEvent   com.eriproject.touchutil 2>/dev/null || true
+
+# Stop any existing running instance cleanly before replacing files.
 echo "==> Stopping any existing touchutil instance..."
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
 pkill -x touchutil 2>/dev/null || true

@@ -20,6 +20,13 @@ cask "touchutil" do
     system_command "/bin/pkill",
       args:         ["-x", "touchutil"],
       must_succeed: false
+    # Reset permissions so the new binary can request them fresh on first launch.
+    system_command "/usr/bin/tccutil",
+      args:         ["reset", "Accessibility", "com.eriproject.touchutil"],
+      must_succeed: false
+    system_command "/usr/bin/tccutil",
+      args:         ["reset", "ListenEvent", "com.eriproject.touchutil"],
+      must_succeed: false
     system_command "/bin/rm",
       args:         ["-rf", "/Applications/touchutil.app"],
       sudo:         true,
