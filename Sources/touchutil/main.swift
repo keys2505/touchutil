@@ -21,6 +21,7 @@
 //    • Accessibility      — to move the cursor and synthesize input
 //
 
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -37,7 +38,8 @@ struct Config {
     var displayModel: UInt32?
     var gestures = true
     var debug = false
-    var debugLog = false    // write debug output to /tmp/touchutil.debug.log instead of stderr
+    var debugLog = false
+    var test = false
 }
 
 struct SavedConfig: Codable {
@@ -212,25 +214,36 @@ final class TouchDriver {
     private var yLogicalMax = 4095.0
     private var pNX = 0.0, pNY = 0.0
     private var pTip = false, pDown = false
+    private var tipTimer: Timer?
+    private let tipDebounce = 0.05   // 50 ms — coalesces rapid tip=1/tip=0 cycles per sample
 
     // Single-finger gesture recognizer state.
     private var fingerDown = false, mousePressed = false, movedBeyond = false
     private var edgeFired = false, longFired = false, edgeResolved = false
+    private var scrollMode = false, dragEnabled = false
     private var nearL = false, nearR = false, nearT = false, nearB = false
     private var sStartPx = CGPoint.zero
+    private var lastScrollPx = CGPoint.zero
     private var longTimer: Timer?
+    private var dragTimer: Timer?
     private var lastTapTime = 0.0
     private var lastTapPx = CGPoint.zero
-    private var lastClickCount = 0
     // Single-finger tunables.
     private let moveTol = 10.0
     private let longPressDelay = 0.5
-    private let edgeMarginN = 0.05
-    private let edgeSwipeThreshold = 100.0
-    private let doubleTapInterval = 0.30
+    private let dragHoldDelay = 0.35  // hold 350ms before horizontal drag enables selection
+    private let edgeMarginN = 0.12    // 12% from edge triggers edge-swipe mode
+    private let edgeSwipeThreshold = 40.0  // px to travel before edge key fires
+    private let doubleTapInterval = 0.25   // window to wait for second tap
     private let doubleTapDist = 25.0
+    private let scrollScale = 3.0
+
+    var testWindow: TestWindow? = nil   // set when running --test
 
     init(config: Config) { self.config = config }
+
+    /// Expose resolved display bounds without starting the full driver (used by --test setup).
+    func boundsForTest() -> CGRect { resolveDisplay() }
 
     // MARK: Display resolution
 
@@ -286,6 +299,21 @@ final class TouchDriver {
         u?.post(tap: .cghidEventTap)
     }
 
+    /// Trigger Mission Control (show all windows) via the F3 / Mission Control key.
+    /// Falls back to Ctrl+Up which is the default keyboard shortcut.
+    private func postMissionControl() {
+        // Key code 160 = F3 / Mission Control on Apple keyboards.
+        // Ctrl+Up (0x7E) is the default shortcut — use both for reliability.
+        let mc = CGEvent(keyboardEventSource: source, virtualKey: 160, keyDown: true)
+        let mcu = CGEvent(keyboardEventSource: source, virtualKey: 160, keyDown: false)
+        if mc == nil {
+            postKey(0x7E, control: true)
+        } else {
+            mc?.post(tap: .cghidEventTap)
+            mcu?.post(tap: .cghidEventTap)
+        }
+    }
+
     // MARK: HID element setup
 
     /// Find the logical max for the General Desktop X / Y axes so we can
@@ -312,16 +340,39 @@ final class TouchDriver {
             debugOut(String(format: "page=0x%02X usage=0x%02X val=%d", page, usage, v))
         }
 
-        var tipChanged = false
         switch (page, usage) {
-        case (0x01, 0x30): pNX = Double(v) / xLogicalMax
-        case (0x01, 0x31): pNY = Double(v) / yLogicalMax
-        case (0x09, 0x01): let t = (v != 0); tipChanged = (t != pTip); pTip = t
+        case (0x01, 0x30):
+            pNX = Double(v) / xLogicalMax
+            if fingerDown { gestureMove() }
+        case (0x01, 0x31):
+            pNY = Double(v) / yLogicalMax
+            if fingerDown { gestureMove() }
+        case (0x09, 0x01):
+            let newTip = (v != 0)
+            if newTip {
+                // Finger (re)touching — cancel any pending tip-off and continue
+                // or start the gesture if not already active.
+                tipTimer?.invalidate(); tipTimer = nil
+                if !fingerDown {
+                    pTip = true
+                    if !config.gestures { simplePrimary(); return }
+                    gestureDown()
+                }
+            } else {
+                // Finger may have lifted — debounce before ending gesture.
+                // Many digitizers pulse tip=0 between samples; we wait tipDebounce
+                // before treating it as a real lift.
+                pTip = false
+                tipTimer?.invalidate()
+                tipTimer = Timer(timeInterval: tipDebounce, repeats: false) { [weak self] _ in
+                    guard let self = self, !self.pTip else { return }
+                    if !self.config.gestures { self.simplePrimary(); return }
+                    self.gestureUp()
+                }
+                RunLoop.current.add(tipTimer!, forMode: .common)
+            }
         default: return
         }
-        if !config.gestures { simplePrimary(); return }
-        if tipChanged { pTip ? gestureDown() : gestureUp() }
-        else if fingerDown { gestureMove() }
     }
 
     private func now() -> Double { ProcessInfo.processInfo.systemUptime }
@@ -329,22 +380,20 @@ final class TouchDriver {
     /// Plain pointer (used with --no-gestures): press on touch, drag, release.
     private func simplePrimary() {
         let p = screenPoint(CGPoint(x: pNX, y: pNY))
-        if pTip && !pDown { pDown = true; postMouse(.leftMouseDown, p) }
-        else if pTip && pDown { postMouse(.leftMouseDragged, p) }
-        else if !pTip && pDown { pDown = false; postMouse(.leftMouseUp, p) }
+        if pTip && !pDown  { pDown = true;  postMouse(.leftMouseDown, p) }
+        else if pTip       { postMouse(.leftMouseDragged, p) }
+        else if pDown      { pDown = false; postMouse(.leftMouseUp, p) }
     }
 
-    /// Click (or multi-click) with a proper click-state so double-tap → double-click.
-    private func postClick(_ p: CGPoint, _ button: CGMouseButton, _ count: Int) {
+    /// Send a click. Does NOT set clickState — macOS measures timing between
+    /// consecutive clicks naturally and increments clickCount itself, exactly as
+    /// a real mouse does. Setting clickState manually causes double-toggle bugs.
+    private func postClick(_ p: CGPoint, _ button: CGMouseButton) {
         CGWarpMouseCursorPosition(p)
         let down: CGEventType = (button == .right) ? .rightMouseDown : .leftMouseDown
-        let up: CGEventType = (button == .right) ? .rightMouseUp : .leftMouseUp
-        if let d = CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button) {
-            d.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count))); d.post(tap: .cghidEventTap)
-        }
-        if let u = CGEvent(mouseEventSource: source, mouseType: up, mouseCursorPosition: p, mouseButton: button) {
-            u.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, count))); u.post(tap: .cghidEventTap)
-        }
+        let up:   CGEventType = (button == .right) ? .rightMouseUp   : .leftMouseUp
+        CGEvent(mouseEventSource: source, mouseType: down, mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
+        CGEvent(mouseEventSource: source, mouseType: up,   mouseCursorPosition: p, mouseButton: button)?.post(tap: .cghidEventTap)
     }
 
     private func startLongTimer() {
@@ -355,83 +404,172 @@ final class TouchDriver {
     }
     private func cancelLongTimer() { longTimer?.invalidate(); longTimer = nil }
 
+    private func startDragTimer() {
+        dragTimer?.invalidate()
+        let t = Timer(timeInterval: dragHoldDelay, repeats: false) { [weak self] _ in
+            self?.dragEnabled = true
+        }
+        RunLoop.current.add(t, forMode: .common)
+        dragTimer = t
+    }
+    private func cancelDragTimer() { dragTimer?.invalidate(); dragTimer = nil }
+
     private func longPressFired() {
         guard fingerDown, !movedBeyond, !edgeFired, !longFired else { return }
         longFired = true
-        postClick(sStartPx, .right, 1)   // long-press → right-click
+        testWindow?.send(.gesture("⚙️ Long Press → Right-click", .systemOrange))
+        postClick(sStartPx, .right)
+    }
+
+    private func postScroll(deltaY: Double) {
+        // Use pixel units for smooth continuous scrolling.
+        // Negate: finger moves up (negative deltaY) → scroll content up (positive).
+        let px = Int32((-deltaY * scrollScale).rounded())
+        guard px != 0 else { return }
+        CGEvent(scrollWheelEvent2Source: source, units: .pixel,
+                wheelCount: 1, wheel1: px, wheel2: 0, wheel3: 0)?
+            .post(tap: .cghidEventTap)
     }
 
     private func gestureDown() {
         fingerDown = true; mousePressed = false; movedBeyond = false
-        edgeFired = false; longFired = false
-        sStartPx = screenPoint(CGPoint(x: pNX, y: pNY))
+        edgeFired = false; longFired = false; scrollMode = false; dragEnabled = false
+        sStartPx = clamp(screenPoint(CGPoint(x: pNX, y: pNY)))
+        lastScrollPx = sStartPx
         let m = edgeMarginN
         nearL = pNX < m; nearR = pNX > 1 - m; nearT = pNY < m; nearB = pNY > 1 - m
         edgeResolved = !(nearL || nearR || nearT || nearB)
-        CGWarpMouseCursorPosition(sStartPx)
+        // Don't warp cursor on touch-down — let cursor stay where it was.
+        // Warping here moves cursor over text which looks like selection during scroll.
+        // Cursor is warped only when a gesture commits: tap (postClick) or drag (postMouse).
+        testWindow?.send(.touch(normX: pNX, normY: pNY))
+        if config.debug {
+            debugOut(String(format: "touch: nx=%.3f ny=%.3f  nearL=%d nearR=%d nearT=%d nearB=%d edgeResolved=%d",
+                pNX, pNY, nearL ? 1:0, nearR ? 1:0, nearT ? 1:0, nearB ? 1:0, edgeResolved ? 1:0))
+        }
         startLongTimer()
+        startDragTimer()
+    }
+
+    /// Clamp a screen point to the touchscreen display bounds so the cursor
+    /// never jumps to another monitor due to edge noise or coordinate rounding.
+    private func clamp(_ p: CGPoint) -> CGPoint {
+        CGPoint(
+            x: max(bounds.minX, min(bounds.maxX - 1, p.x)),
+            y: max(bounds.minY, min(bounds.maxY - 1, p.y))
+        )
     }
 
     private func gestureMove() {
-        let cur = screenPoint(CGPoint(x: pNX, y: pNY))
-        CGWarpMouseCursorPosition(cur)
+        let cur = clamp(screenPoint(CGPoint(x: pNX, y: pNY)))
         let dist = hypot(cur.x - sStartPx.x, cur.y - sStartPx.y)
-        if dist <= moveTol { return }
-        if !movedBeyond { movedBeyond = true; cancelLongTimer() }
+        if dist <= moveTol { return }   // wait for clear movement before committing to any gesture
+
+        if !movedBeyond {
+            movedBeyond = true
+            cancelLongTimer()
+            cancelDragTimer()
+            let dx = cur.x - sStartPx.x
+            let dy = cur.y - sStartPx.y
+            // Scroll when movement is vertical, UNLESS near top/bottom edge
+            // (those have their own vertical gesture — Mission Control / App Exposé).
+            // Near left/right edges still allow vertical scroll — only horizontal
+            // movement near left/right triggers edge swipe.
+            let nearVerticalEdge = nearT || nearB
+            if abs(dy) > abs(dx) && !nearVerticalEdge {
+                scrollMode = true
+                lastScrollPx = cur
+            }
+            if config.debug {
+                debugOut(String(format: "gesture: dx=%.1f dy=%.1f → %@", dx, dy, scrollMode ? "SCROLL" : "DRAG"))
+            }
+        }
+
+        // Scroll mode — post wheel events, cursor stays put.
+        if scrollMode {
+            let deltaY = cur.y - lastScrollPx.y
+            if abs(deltaY) > 0.5 {
+                let dir = deltaY < 0 ? "↑ Scroll Up" : "↓ Scroll Down"
+                testWindow?.send(.gesture(dir, .systemBlue))
+            }
+            postScroll(deltaY: deltaY)
+            lastScrollPx = cur
+            return
+        }
+
         if edgeFired { return }
         if !edgeResolved {
-            if dist < edgeSwipeThreshold { return }   // wait until clearly a swipe
+            if dist < edgeSwipeThreshold { return }
             let dx = cur.x - sStartPx.x, dy = cur.y - sStartPx.y
             var fired = false
-            if nearL && dx > abs(dy) { postKey(0x7B, control: true); fired = true }       // left edge → prev Space
-            else if nearR && -dx > abs(dy) { postKey(0x7C, control: true); fired = true } // right edge → next Space
-            else if nearT && dy > abs(dx) { postKey(0x7E, control: true); fired = true }  // top edge → Mission Control
-            else if nearB && -dy > abs(dx) { postKey(0x7D, control: true); fired = true } // bottom edge → App Exposé
+            if (nearL && dx > abs(dy)) || (nearR && -dx > abs(dy)) ||
+               (nearT && dy > abs(dx))  || (nearB && -dy > abs(dx)) {
+                testWindow?.send(.gesture("⬆ Edge → All Windows", .systemPurple))
+                postMissionControl()
+                fired = true
+            }
             if fired { edgeFired = true; return }
-            edgeResolved = true   // not an inward edge swipe → treat as a drag
+            edgeResolved = true
         }
-        if !mousePressed { mousePressed = true; postMouse(.leftMouseDown, sStartPx) }
+        // Drag/select only if: held long enough AND clearly more horizontal than vertical.
+        // The 1.5x factor prevents an accidental horizontal wobble during a vertical
+        // scroll from triggering drag/selection.
+        let adx = abs(cur.x - sStartPx.x), ady = abs(cur.y - sStartPx.y)
+        guard dragEnabled && adx > ady * 1.5 else { return }
+        if !mousePressed {
+            mousePressed = true
+            testWindow?.send(.gesture("✊ Dragging…", .systemYellow))
+            postMouse(.leftMouseDown, sStartPx)
+        }
+        testWindow?.send(.touch(normX: pNX, normY: pNY))
         postMouse(.leftMouseDragged, cur)
     }
 
     private func gestureUp() {
-        fingerDown = false; cancelLongTimer()
-        let cur = screenPoint(CGPoint(x: pNX, y: pNY))
+        fingerDown = false; cancelLongTimer(); cancelDragTimer()
+        let cur = clamp(screenPoint(CGPoint(x: pNX, y: pNY)))
+        testWindow?.send(.lift)
         if mousePressed { postMouse(.leftMouseUp, cur); mousePressed = false; return }
-        if edgeFired || longFired { return }   // gesture already acted
-        // Tap → click, with double-tap → double-click.
-        let t = now()
-        var count = 1
-        if t - lastTapTime < doubleTapInterval,
-           hypot(cur.x - lastTapPx.x, cur.y - lastTapPx.y) < doubleTapDist {
-            count = min(lastClickCount + 1, 3)
-        }
-        postClick(cur, .left, count)
-        lastTapTime = t; lastTapPx = cur; lastClickCount = count
+        if edgeFired || longFired || scrollMode { scrollMode = false; return }
+
+        // Tap → click. No manual clickState — macOS counts consecutive taps by timing,
+        // exactly like a real mouse. This avoids the double-toggle bug in Chrome and
+        // other apps where manual clickState=2 fires TWO zoom/action events.
+        let time = now()
+        let isDoubleTap = time - lastTapTime < doubleTapInterval &&
+                          hypot(cur.x - lastTapPx.x, cur.y - lastTapPx.y) < doubleTapDist
+        testWindow?.send(.gesture(isDoubleTap ? "👆👆 Double Tap" : "👆 Tap", .systemGreen))
+        postClick(cur, .left)
+        lastTapTime = time; lastTapPx = cur
     }
 
     // MARK: Run loop
 
+    // Check permissions silently — never pop a system dialog automatically.
+    // Showing the dialog on every launch is intrusive; users grant once via
+    // System Settings and the app remembers it. If not yet granted, print
+    // clear instructions to stderr/log and let the run loop retry naturally.
     private func ensureAccessibility() {
-        if AXIsProcessTrusted() { err("Accessibility: granted."); return }
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(opts)
-        err("Accessibility: NOT granted. Enable this app under System Settings > Privacy & Security > Accessibility, then re-run.")
+        if AXIsProcessTrusted() {
+            err("Accessibility: granted.")
+        } else {
+            err("Accessibility: not granted — open System Settings → Privacy & Security → Accessibility and enable touchutil, then re-launch.")
+        }
     }
 
-    /// Ask macOS for Input Monitoring. IOHIDRequestAccess surfaces the system
-    /// prompt (and registers the app in the Input Monitoring list) the first
-    /// time; afterwards it just reports the current grant state.
     private func ensureInputMonitoring() {
         switch IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) {
         case kIOHIDAccessTypeGranted:
             err("Input Monitoring: granted.")
         case kIOHIDAccessTypeDenied:
-            err("Input Monitoring: DENIED. Enable this app under System Settings > Privacy & Security > Input Monitoring, then re-run.")
+            err("Input Monitoring: denied — open System Settings → Privacy & Security → Input Monitoring and enable touchutil, then re-launch.")
         default:
-            // Unknown / not yet decided — prompt the user.
-            let granted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-            err("Input Monitoring: \(granted ? "granted." : "NOT granted — approve the prompt (or enable under System Settings > Privacy & Security > Input Monitoring), then re-run.")")
+            // Truly first run — call once to register touchutil in the list.
+            // This shows the system banner (not a blocking dialog) so the user
+            // can click through to System Settings. Never called again once
+            // the status is known (granted or denied).
+            IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+            err("Input Monitoring: requested — approve in System Settings → Privacy & Security → Input Monitoring, then re-launch.")
         }
     }
 
@@ -485,7 +623,12 @@ final class TouchDriver {
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
 
         err("Touch driver running. Press Ctrl+C to stop.")
-        CFRunLoopRun()
+        if testWindow != nil {
+            // NSApplication run loop drives both the UI and the HID callbacks.
+            NSApplication.shared.run()
+        } else {
+            CFRunLoopRun()
+        }
     }
 }
 
@@ -504,10 +647,12 @@ func printUsage() {
     --setup choice) and enables single-finger gestures.
 
     Single-finger gestures (work on any panel):
-      • move / tap        → cursor + click
+      • move              → cursor
+      • tap               → click
       • double-tap        → double-click
       • long-press (~0.5s)→ right-click
-      • drag              → move windows / select
+      • vertical drag     → scroll up / down
+      • horizontal drag   → drag / select text / move windows
       • edge swipe inward → left:prev Space  right:next Space
                             top:Mission Control  bottom:App Exposé
 
@@ -522,6 +667,7 @@ func printUsage() {
       --display-model M          Match target display by model number
       --vendor-id  0xVVVV        Match a specific touch device
       --product-id 0xPPPP        Match a specific touch device
+      --test                     Open a gesture-feedback window on the touchscreen display
       --debug                    Log raw HID page/usage/value to stderr
       --debug-log                Log raw HID page/usage/value to /tmp/touchutil.debug.log
       --version                  Print version and exit
@@ -567,6 +713,7 @@ while i < args.count {
         i += 1
         guard i < args.count, let v = parseInt(args[i]) else { err("--product-id requires a value"); exit(2) }
         config.productID = v
+    case "--test": config.test = true
     case "--debug": config.debug = true
     case "--debug-log":
         config.debug = true
@@ -580,4 +727,18 @@ while i < args.count {
     i += 1
 }
 
-TouchDriver(config: config).run()
+let driver = TouchDriver(config: config)
+
+if config.test {
+    let overlay = TestWindow()
+    // Resolve display bounds early so the window opens on the right screen.
+    let testBounds: CGRect = {
+        var cfg = config; cfg.test = false
+        // Use a temporary driver just for display resolution.
+        return TouchDriver(config: cfg).boundsForTest()
+    }()
+    overlay.open(on: testBounds)
+    driver.testWindow = overlay
+}
+
+driver.run()

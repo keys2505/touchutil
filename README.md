@@ -20,7 +20,7 @@ clicks/drags there — so a tap lands where you tap.
 
 - ✅ Apple Silicon + Intel (universal binary)
 - ✅ No kernel extension, no SIP changes
-- ✅ Single-finger: tap, double-tap, long-press (right-click), drag, edge swipes
+- ✅ Single-finger: tap, double-tap, long-press, scroll, drag, edge swipes
 
 ## Limitations / disclaimer
 
@@ -114,6 +114,21 @@ touchutil --setup   # pick the touchscreen display and remember it
 Touch the screen — the cursor jumps to your finger and clicks/drags. Press
 **Ctrl+C** to stop. Your `--setup` choice is saved to
 `~/.config/touchutil/config.json` and reused on every run.
+
+### Supported gestures
+
+| Gesture | Action |
+| --- | --- |
+| Tap | Click |
+| Double-tap | Double-click |
+| Long-press (~0.5s) | Right-click |
+| Move | Move cursor |
+| Drag vertically | Scroll up / down |
+| Drag horizontally | Drag — move windows, select text |
+| Edge swipe inward from left | Previous Space |
+| Edge swipe inward from right | Next Space |
+| Edge swipe inward from top | Mission Control |
+| Edge swipe inward from bottom | App Exposé |
 
 ### Options
 
