@@ -7,36 +7,49 @@ cask "touchutil" do
   desc "Map an external USB touchscreen to its display on macOS"
   homepage "https://github.com/keys2505/touchutil"
 
-  # No app/binary directives — Homebrew tracks app location when these are used
-  # and fails during upgrade if the app was previously moved or deleted.
-  # We handle installation entirely in preflight/postflight/uninstall instead.
+  # No app/binary directives — avoids Homebrew's app-location tracking which
+  # causes upgrade failures when the app has been moved or deleted.
 
   preflight do
-    # Stop and clean up any existing installation before installing.
+    # Gracefully stop any existing instance — must_succeed: false so we never
+    # fail if the agent isn't loaded or the app doesn't exist yet.
     system_command "/bin/launchctl",
-      args: ["bootout", "gui/#{Process.uid}/com.touchutil.agent"],
-      sudo: false
-    system_command "/bin/rm", args: ["-rf", "/Applications/touchutil.app"], sudo: true
-    system_command "/bin/rm", args: ["-f",  "/usr/local/bin/touchutil"],    sudo: true
-    system_command "/bin/rm", args: ["-f",  "/opt/homebrew/bin/touchutil"], sudo: true
+      args:         ["bootout", "gui/#{Process.uid}/com.touchutil.agent"],
+      sudo:         false,
+      must_succeed: false
+    system_command "/bin/pkill",
+      args:         ["-x", "touchutil"],
+      must_succeed: false
+    system_command "/bin/rm",
+      args:         ["-rf", "/Applications/touchutil.app"],
+      sudo:         true,
+      must_succeed: false
+    system_command "/bin/rm",
+      args:         ["-f", "/usr/local/bin/touchutil"],
+      sudo:         true,
+      must_succeed: false
+    system_command "/bin/rm",
+      args:         ["-f", "/opt/homebrew/bin/touchutil"],
+      sudo:         true,
+      must_succeed: false
     plist = "#{Dir.home}/Library/LaunchAgents/com.touchutil.agent.plist"
     File.delete(plist) if File.exist?(plist)
   end
 
   postflight do
-    # Copy app bundle to /Applications.
+    # Install app bundle.
     system_command "/bin/cp",
       args: ["-R", "#{staged_path}/touchutil.app", "/Applications/touchutil.app"],
       sudo: true
 
     exec_path = "/Applications/touchutil.app/Contents/MacOS/touchutil"
 
-    # Create CLI symlink in Homebrew's bin directory.
+    # CLI symlink — detect Homebrew prefix.
     brew_bin = File.exist?("/opt/homebrew/bin") ? "/opt/homebrew/bin" : "/usr/local/bin"
     system_command "/bin/mkdir", args: ["-p", brew_bin], sudo: true
     system_command "/bin/ln",    args: ["-sf", exec_path, "#{brew_bin}/touchutil"], sudo: true
 
-    # Write LaunchAgent plist.
+    # Write and load LaunchAgent.
     plist_path = "#{Dir.home}/Library/LaunchAgents/com.touchutil.agent.plist"
     plist_content = <<~XML
       <?xml version="1.0" encoding="UTF-8"?>
@@ -65,8 +78,9 @@ cask "touchutil" do
     File.write(plist_path, plist_content)
 
     system_command "/bin/launchctl",
-      args: ["bootstrap", "gui/#{Process.uid}", plist_path],
-      sudo: false
+      args:         ["bootstrap", "gui/#{Process.uid}", plist_path],
+      sudo:         false,
+      must_succeed: false
   end
 
   caveats <<~EOS
