@@ -61,6 +61,7 @@ cask "touchutil" do
           <key>ProgramArguments</key>
           <array>
               <string>#{exec_path}</string>
+              <string>--agent</string>
           </array>
           <key>RunAtLoad</key>
           <true/>

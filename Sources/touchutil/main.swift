@@ -645,19 +645,34 @@ final class TouchDriver {
         IOHIDManagerRegisterInputValueCallback(manager, cb, Unmanaged.passUnretained(self).toOpaque())
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), CFRunLoopMode.defaultMode.rawValue)
 
-        err("Touch driver running. Press Ctrl+C to stop.")
-        if testWindow != nil {
-            // NSApplication run loop drives both the UI and the HID callbacks.
-            NSApplication.shared.run()
-        } else {
-            CFRunLoopRun()
+        // Handle SIGUSR1 — show the test window when signalled by a Finder launch.
+        signal(SIGUSR1, SIG_IGN)
+        let sigSrc = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        let driverRef = self
+        sigSrc.setEventHandler {
+            if driverRef.testWindow == nil {
+                let overlay = TestWindow()
+                overlay.open(on: driverRef.boundsForTest())
+                driverRef.testWindow = overlay
+            }
+            NSApplication.shared.setActivationPolicy(.regular)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            driverRef.testWindow?.send(.gesture("👋 Opened from Finder", .systemGreen))
         }
+        sigSrc.resume()
+
+        err("Touch driver running. Press Ctrl+C to stop.")
+        // Always run through NSApplication so distributed notifications and
+        // UI events are handled even when no test window is open at launch.
+        NSApplication.shared.setActivationPolicy(testWindow != nil ? .regular : .accessory)
+        if testWindow != nil { NSApplication.shared.activate(ignoringOtherApps: true) }
+        NSApplication.shared.run()
     }
 }
 
 // MARK: - Argument parsing
 
-let version = "1.2.2"
+let version = "1.2.3"
 
 func printUsage() {
     print("""
@@ -703,7 +718,33 @@ func parseInt(_ s: String) -> Int? {
     return Int(s)
 }
 
+// If launched with no arguments (double-clicked from Finder):
+// signal the running agent to show its test window and exit.
+// The LaunchAgent always passes --agent so we can tell them apart.
+let pidFile = "/tmp/touchutil.pid"
+let selfPID = ProcessInfo.processInfo.processIdentifier
+// --agent = started by LaunchAgent (background). No args = opened from Finder.
+let isAgent = CommandLine.arguments.contains("--agent")
+let launchedFromFinder = !isAgent && CommandLine.arguments.count == 1
+
+if launchedFromFinder,
+   let pidStr = try? String(contentsOfFile: pidFile, encoding: .utf8),
+   let runningPID = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines)),
+   runningPID != selfPID,
+   kill(runningPID, 0) == 0 {
+    kill(runningPID, SIGUSR1)
+    Thread.sleep(forTimeInterval: 0.3)
+    exit(0)
+}
+// No running agent — Finder launch starts driver + test window automatically.
+
+// Write PID file now (before any error exits) so Finder launches can find us.
+if !launchedFromFinder {
+    try? String(selfPID).write(toFile: pidFile, atomically: true, encoding: .utf8)
+}
+
 var config = Config()
+if launchedFromFinder { config.test = true }   // show test window when opened from Finder
 let args = Array(CommandLine.arguments.dropFirst())
 var i = 0
 while i < args.count {
@@ -736,6 +777,7 @@ while i < args.count {
         i += 1
         guard i < args.count, let v = parseInt(args[i]) else { err("--product-id requires a value"); exit(2) }
         config.productID = v
+    case "--agent": break   // passed by LaunchAgent — background mode, no UI on startup
     case "--test": config.test = true
     case "--debug": config.debug = true
     case "--debug-log":

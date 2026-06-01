@@ -47,7 +47,8 @@ sudo ln -sf "$EXEC" "$CLI_LINK"
 echo "==> Installing LaunchAgent to $PLIST..."
 mkdir -p "$HOME/Library/LaunchAgents"
 
-ARGS_XML="        <string>$EXEC</string>"
+ARGS_XML="        <string>$EXEC</string>
+        <string>--agent</string>"
 for a in "$@"; do
     ARGS_XML="$ARGS_XML
         <string>$a</string>"
