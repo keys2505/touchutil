@@ -123,7 +123,9 @@ on every run.
 | Long-press (~0.5s) | Right-click |
 | Vertical swipe | Scroll up / down |
 | Hold 0.35s then drag horizontally | Select text / move windows |
-| Edge swipe from any edge | Mission Control (show all windows) |
+| Swipe inward from bottom-left corner | Mission Control (show all windows) |
+| Swipe inward from left edge | Previous Space |
+| Swipe inward from right edge | Next Space |
 
 ### Options
 

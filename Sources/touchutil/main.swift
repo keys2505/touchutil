@@ -510,11 +510,19 @@ final class TouchDriver {
             if dist < edgeSwipeThreshold { return }
             let dx = cur.x - sStartPx.x, dy = cur.y - sStartPx.y
             var fired = false
-            if (nearL && dx > abs(dy)) || (nearR && -dx > abs(dy)) ||
-               (nearT && dy > abs(dx))  || (nearB && -dy > abs(dx)) {
+            let isCornerBL = nearL && nearB   // bottom-left corner
+            if isCornerBL && (dx > abs(dy) || -dy > abs(dx)) {
+                // Bottom-left corner swipe (any inward direction) → Mission Control
                 testWindow?.send(.gesture("⬆ Edge → All Windows", .systemPurple))
-                postMissionControl()
-                fired = true
+                postMissionControl(); fired = true
+            } else if nearL && !nearB && dx > abs(dy) {
+                // Left edge only → Prev Space
+                testWindow?.send(.gesture("⬅ Edge → Prev Space", .systemPurple))
+                postKey(0x7B, control: true); fired = true
+            } else if nearR && -dx > abs(dy) {
+                // Right edge → Next Space
+                testWindow?.send(.gesture("➡ Edge → Next Space", .systemPurple))
+                postKey(0x7C, control: true); fired = true
             }
             if fired { edgeFired = true; return }
             edgeResolved = true
@@ -649,7 +657,7 @@ final class TouchDriver {
 
 // MARK: - Argument parsing
 
-let version = "1.2.1"
+let version = "1.2.2"
 
 func printUsage() {
     print("""
