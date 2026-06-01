@@ -560,6 +560,11 @@ final class TouchDriver {
         if !mousePressed {
             mousePressed = true
             testWindow?.send(.gesture("✊ Dragging…", .systemYellow))
+            // Force the cursor to the touch start before grabbing, so the drag
+            // grabs whatever is under the touchscreen point — not whatever the
+            // cursor was previously over on another display.
+            CGWarpMouseCursorPosition(sStartPx)
+            postMouse(.mouseMoved, sStartPx)
             postMouse(.leftMouseDown, sStartPx)
         }
         testWindow?.send(.touch(normX: pNX, normY: pNY))
@@ -747,7 +752,7 @@ final class AppReopenDelegate: NSObject, NSApplicationDelegate {
 
 // MARK: - Argument parsing
 
-let version = "1.2.7"
+let version = "1.2.8"
 
 func printUsage() {
     print("""
